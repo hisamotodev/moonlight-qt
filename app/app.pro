@@ -580,3 +580,17 @@ macx {
 
 VERSION = "$$cat(version.txt)"
 DEFINES += VERSION_STR=\\\"$$cat(version.txt)\\\"
+
+# Destiny local addition: expose the short git commit SHA as a separate
+# define for diagnostics display only. This is deliberately NOT appended to
+# VERSION_STR/VERSION themselves -- VERSION_STR feeds
+# QCoreApplication::applicationVersion(), which autoupdatechecker.cpp splits
+# on '.' and parses each component with QString::toInt() to compare against
+# the latest release; a non-numeric "-<sha>" suffix would silently corrupt
+# that comparison. version.txt-based release versioning is left untouched.
+GIT_COMMIT_SHA = $$system(git rev-parse --short HEAD)
+isEmpty(GIT_COMMIT_SHA) {
+    DEFINES += VERSION_COMMIT_STR=\\\"\\\"
+} else {
+    DEFINES += VERSION_COMMIT_STR=\\\"$$GIT_COMMIT_SHA\\\"
+}
