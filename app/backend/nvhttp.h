@@ -161,6 +161,16 @@ public:
     void
     quitApp();
 
+    // PoC 6 (agent.md section 11 / 8): resolves remotePath to a registered
+    // app's name via Titan's POST /api/custom/remote-run. Throws
+    // GfeHttpResponseException on a well-formed error response (e.g. 404
+    // REMOTE_RUN_NOT_REGISTERED) or QtNetworkReplyException on a lower-level
+    // network failure. See docs/research/poc6-remote-run.md (Destiny
+    // superproject) for the endpoint's exact contract and why this returns
+    // a name rather than just an app ID.
+    QString
+    remoteRun(QString remotePath);
+
     void
     startApp(QString verb,
              bool isGfe,

@@ -64,9 +64,17 @@ public:
     QString getHost() const;
     QString getAppName() const;
 
+    // PoC 6 (agent.md section 11 / 8): resolves to an app name via Titan's
+    // POST /api/custom/remote-run before the normal by-name stream-start
+    // flow runs -- see docs/research/poc6-remote-run.md in the Destiny
+    // superproject for why this hooks in at the app-name level rather than
+    // touching Session/NvHTTP::startApp().
+    QString getRemoteRunPath() const;
+
 private:
     QString m_Host;
     QString m_AppName;
+    QString m_RemoteRunPath;
     QMap<QString, StreamingPreferences::WindowMode> m_WindowModeMap;
     QMap<QString, StreamingPreferences::AudioConfig> m_AudioConfigMap;
     QMap<QString, StreamingPreferences::VideoCodecConfig> m_VideoCodecMap;

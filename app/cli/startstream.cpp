@@ -1,6 +1,7 @@
 #include "startstream.h"
 #include "backend/computermanager.h"
 #include "backend/computerseeker.h"
+#include "backend/nvhttp.h"
 #include "streaming/session.h"
 
 #include <QCoreApplication>
@@ -80,8 +81,27 @@ public:
         case Event::ComputerFound:
             if (m_State == StateSeekComputer) {
                 if (event.computer->pairState == NvComputer::PS_PAIRED) {
-                    m_State = StateSeekApp;
                     m_Computer = event.computer;
+
+                    if (!m_RemoteRunPath.isEmpty()) {
+                        // PoC 6: resolve remote_path -> app name now, using
+                        // the just-resolved NvComputer's address/port/cert,
+                        // then fall through to the existing by-name flow
+                        // exactly as if the user had typed that name. See
+                        // docs/research/poc6-remote-run.md.
+                        try {
+                            NvHTTP http(m_Computer);
+                            m_AppName = http.remoteRun(m_RemoteRunPath);
+                            qInfo() << "Remote-run resolved" << m_RemoteRunPath << "to app" << m_AppName;
+                        } catch (const std::exception &e) {
+                            m_State = StateFailure;
+                            emit q->failed(QObject::tr("Remote-run failed to resolve \"%1\": %2")
+                                           .arg(m_RemoteRunPath, QString::fromUtf8(e.what())));
+                            break;
+                        }
+                    }
+
+                    m_State = StateSeekApp;
                     m_TimeoutTimer->start(APP_SEEK_TIMEOUT);
                     emit q->searchingApp();
                 } else {
@@ -173,6 +193,7 @@ public:
     Launcher *q_ptr;
     QString m_ComputerName;
     QString m_AppName;
+    QString m_RemoteRunPath;
     StreamingPreferences *m_Preferences;
     ComputerManager *m_ComputerManager;
     ComputerSeeker *m_ComputerSeeker;
@@ -182,13 +203,15 @@ public:
 };
 
 Launcher::Launcher(QString computer, QString app,
-                   StreamingPreferences* preferences, QObject *parent)
+                   StreamingPreferences* preferences, QObject *parent,
+                   QString remoteRunPath)
     : QObject(parent),
       m_DPtr(new LauncherPrivate(this))
 {
     Q_D(Launcher);
     d->m_ComputerName = computer;
     d->m_AppName = app;
+    d->m_RemoteRunPath = remoteRunPath;
     d->m_Preferences = preferences;
     d->m_State = StateInit;
     d->m_TimeoutTimer = new QTimer(this);

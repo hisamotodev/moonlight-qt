@@ -339,7 +339,11 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
 
     // Add other arguments and options
     parser.addPositionalArgument("host", "Host computer name, UUID, or IP address", "<host>");
-    parser.addPositionalArgument("app", "App to stream", "\"<app>\"");
+    parser.addPositionalArgument("app", "App to stream (omit if --remote-run is given)", "[\"<app>\"]");
+    // PoC 6 (agent.md section 11): resolves to an app name via Titan's
+    // POST /api/custom/remote-run instead of the caller naming <app>
+    // directly. See docs/research/poc6-remote-run.md (Destiny superproject).
+    parser.addValueOption("remote-run", "resolve a registered app by its remote_path via the host's remote-run API");
 
     parser.addFlagOption("720",  "1280x720 resolution");
     parser.addFlagOption("1080", "1920x1080 resolution");
@@ -517,10 +521,16 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     }
     m_Host = parser.positionalArguments().at(1);
 
-    if (posArgs.length() < 3) {
-        parser.showError("App not provided");
+    if (parser.isSet("remote-run")) {
+        m_RemoteRunPath = parser.value("remote-run");
+        // <app> is resolved later (via remote-run) instead of being named
+        // here; m_AppName stays empty until the caller fills it in.
+    } else {
+        if (posArgs.length() < 3) {
+            parser.showError("App not provided");
+        }
+        m_AppName = parser.positionalArguments().at(2);
     }
-    m_AppName = parser.positionalArguments().at(2);
 }
 
 QString StreamCommandLineParser::getHost() const
@@ -531,6 +541,11 @@ QString StreamCommandLineParser::getHost() const
 QString StreamCommandLineParser::getAppName() const
 {
     return m_AppName;
+}
+
+QString StreamCommandLineParser::getRemoteRunPath() const
+{
+    return m_RemoteRunPath;
 }
 
 ListCommandLineParser::ListCommandLineParser()

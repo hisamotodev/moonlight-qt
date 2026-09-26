@@ -2,6 +2,8 @@
 #include <Limelight.h>
 
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QUuid>
 #include <QtNetwork/QNetworkReply>
 #include <QEventLoop>
@@ -266,6 +268,80 @@ NvHTTP::quitApp()
         // that they can't kill someone else's stream.
         throw GfeHttpResponseException(599, "");
     }
+}
+
+QString
+NvHTTP::remoteRun(QString remotePath)
+{
+    // Titan's remote-run endpoint takes a JSON POST body and returns JSON,
+    // unlike every other NvHTTP call in this file (GFE-style GET + XML) --
+    // so this doesn't reuse openConnection()/openConnectionToString(), it
+    // mirrors their pattern (client cert, HTTP/2 disabled, connection-cache
+    // expiry, synchronous QEventLoop wait) directly for a POST instead.
+    QUrl url(m_BaseUrlHttps);
+    url.setPath("/api/custom/remote-run");
+
+    QNetworkRequest request(url);
+    request.setSslConfiguration(IdentityManager::get()->getSslConfig());
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+#endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
+    request.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, 0);
+#endif
+
+    QJsonObject requestObj;
+    requestObj["remote_path"] = remotePath;
+    QByteArray requestBody = QJsonDocument(requestObj).toJson(QJsonDocument::Compact);
+
+    auto sslErrorsConnection = connect(m_Nam, &QNetworkAccessManager::sslErrors, this, &NvHTTP::handleSslErrors);
+    QNetworkReply* reply = m_Nam->post(request, requestBody);
+
+    QEventLoop loop;
+    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &loop, &QEventLoop::quit);
+    QTimer::singleShot(REQUEST_TIMEOUT_MS, &loop, &QEventLoop::quit);
+    qInfo() << "Executing remote-run request:" << url.toString() << "for" << remotePath;
+    loop.exec(QEventLoop::ExcludeUserInputEvents);
+
+    if (!reply->isFinished()) {
+        qWarning() << "Aborting timed out remote-run request for" << url.toString();
+        reply->abort();
+    }
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 3, 0)
+    m_Nam->clearAccessCache();
+#endif
+    disconnect(sslErrorsConnection);
+
+    QByteArray responseBody = reply->readAll();
+    int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QNetworkReply::NetworkError netError = reply->error();
+    delete reply;
+
+    QJsonParseError parseError {};
+    QJsonDocument responseDoc = QJsonDocument::fromJson(responseBody, &parseError);
+
+    if (parseError.error != QJsonParseError::NoError) {
+        // No parseable JSON body at all -- a real network/TLS failure
+        // (including "connection closed, no client cert" -- see
+        // docs/research/poc6-remote-run.md), not an application-level error
+        // Titan reported to us.
+        throw QtNetworkReplyException(netError != QNetworkReply::NoError ? netError : QNetworkReply::UnknownContentError,
+                                       "Remote-run request failed: " + parseError.errorString());
+    }
+
+    QJsonObject responseObj = responseDoc.object();
+
+    if (httpStatus != 200) {
+        QString errorCode = responseObj.value("error").toString("REMOTE_RUN_FAILED");
+        QString message = responseObj.value("message").toString(errorCode);
+        throw GfeHttpResponseException(httpStatus, message);
+    }
+
+    return responseObj.value("name").toString();
 }
 
 QVector<NvDisplayMode>
