@@ -182,8 +182,26 @@ public:
     // non-null) are populated with the resolved window's real size, so the
     // caller can size its own stream/client window to match instead of
     // stretching the app's actual content into a mismatched resolution.
+    // titleOut (if non-null) is set to the target window's live title, and
+    // iconCrc32Out (if non-null) to a checksum of its current icon -- both
+    // left untouched (titleOut cleared, iconCrc32Out set to 0) when Titan
+    // doesn't report them (e.g. a non-capture-window app), so the caller can
+    // tell "unavailable" from "unchanged". See remoteRunIcon() for fetching
+    // the actual icon pixels when iconCrc32Out changes between polls.
     QString
-    remoteRunStatus(int appId, int* widthOut = nullptr, int* heightOut = nullptr);
+    remoteRunStatus(int appId, int* widthOut = nullptr, int* heightOut = nullptr, QString* titleOut = nullptr, quint32* iconCrc32Out = nullptr);
+
+    // Fetches the remote-run target window's current icon as a raw 32x32
+    // RGBA8888 buffer (1024 pixels / 4096 bytes, no PNG or other image
+    // codec involved -- see docs/research/poc6-remote-run.md's window
+    // title/icon mirroring notes) from Titan's
+    // GET /api/custom/remote-run/icon. Callers should only call this when
+    // remoteRunStatus()'s iconCrc32Out has changed since the last call, to
+    // avoid re-fetching an unchanged icon every poll. Throws the same
+    // exceptions as remoteRun() on network/protocol failure; returns an
+    // empty QByteArray if Titan has no icon available for this app_id.
+    QByteArray
+    remoteRunIcon(int appId);
 
     void
     startApp(QString verb,

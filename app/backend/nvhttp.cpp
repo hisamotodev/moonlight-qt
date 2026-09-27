@@ -350,7 +350,7 @@ NvHTTP::remoteRun(QString remotePath, int* appIdOut)
 }
 
 QString
-NvHTTP::remoteRunStatus(int appId, int* widthOut, int* heightOut)
+NvHTTP::remoteRunStatus(int appId, int* widthOut, int* heightOut, QString* titleOut, quint32* iconCrc32Out)
 {
     // Same idiom as remoteRun() above (JSON, not GFE-style GET+XML) -- see
     // its comment for why this doesn't use openConnection()/openConnectionToString().
@@ -416,8 +416,72 @@ NvHTTP::remoteRunStatus(int appId, int* widthOut, int* heightOut)
     if (heightOut && responseObj.contains("height")) {
         *heightOut = responseObj.value("height").toInt();
     }
+    if (titleOut && responseObj.contains("window_title")) {
+        *titleOut = responseObj.value("window_title").toString();
+    }
+    if (iconCrc32Out && responseObj.contains("window_icon_crc32")) {
+        *iconCrc32Out = responseObj.value("window_icon_crc32").toString().toUInt();
+    }
 
     return responseObj.value("state").toString();
+}
+
+QByteArray
+NvHTTP::remoteRunIcon(int appId)
+{
+    // Same idiom as remoteRunStatus() above, but the response body is the
+    // raw icon pixels themselves rather than JSON -- see nvhttp.h's comment
+    // for the wire format (32x32 RGBA8888, no image codec).
+    QUrl url(m_BaseUrlHttps);
+    url.setPath("/api/custom/remote-run/icon");
+    QUrlQuery query;
+    query.addQueryItem("app_id", QString::number(appId));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setSslConfiguration(IdentityManager::get()->getSslConfig());
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+#endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
+    request.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, 0);
+#endif
+
+    auto sslErrorsConnection = connect(m_Nam, &QNetworkAccessManager::sslErrors, this, &NvHTTP::handleSslErrors);
+    QNetworkReply* reply = m_Nam->get(request);
+
+    QEventLoop loop;
+    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &loop, &QEventLoop::quit);
+    QTimer::singleShot(REQUEST_TIMEOUT_MS, &loop, &QEventLoop::quit);
+    loop.exec(QEventLoop::ExcludeUserInputEvents);
+
+    if (!reply->isFinished()) {
+        qWarning() << "Aborting timed out remote-run icon request for" << url.toString();
+        reply->abort();
+    }
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 3, 0)
+    m_Nam->clearAccessCache();
+#endif
+    disconnect(sslErrorsConnection);
+
+    QByteArray responseBody = reply->readAll();
+    int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QNetworkReply::NetworkError netError = reply->error();
+    delete reply;
+
+    if (httpStatus != 200) {
+        if (netError != QNetworkReply::NoError && httpStatus == 0) {
+            throw QtNetworkReplyException(netError, "Remote-run icon request failed");
+        }
+        // 404 (no icon available yet) is a normal, expected outcome here --
+        // just report "no icon" rather than throwing.
+        return QByteArray();
+    }
+
+    return responseBody;
 }
 
 QVector<NvDisplayMode>

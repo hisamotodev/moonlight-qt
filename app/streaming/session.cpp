@@ -30,6 +30,13 @@
 #define SDL_CODE_GAMECONTROLLER_SET_ADAPTIVE_TRIGGERS 105
 #define SDL_CODE_VIDEO_SIZE_CHANGED 106
 #define SDL_CODE_RECONNECT_TEARDOWN_DECODER 107
+#define SDL_CODE_WINDOW_INFO_CHANGED 108
+
+// Fixed icon wire size Titan's /api/custom/remote-run/icon always sends
+// (nvhttp.cpp's WINDOW_ICON_SIZE) -- intentionally independent of this
+// file's own ICON_SIZE (which varies by client platform/DPI preference),
+// since this is a wire contract with the host, not a local rendering choice.
+#define REMOTE_RUN_ICON_SIZE 32
 
 #include <openssl/rand.h>
 
@@ -1610,6 +1617,8 @@ public:
         NvHTTP http(m_Session->m_Computer);
         int lastWidth = m_Session->m_StreamConfig.width;
         int lastHeight = m_Session->m_StreamConfig.height;
+        QString lastTitle;
+        quint32 lastIconCrc32 = 0;
 
         while (!isInterruptionRequested()) {
             for (int slept = 0; slept < REMOTE_RUN_SIZE_POLL_INTERVAL_MS && !isInterruptionRequested(); slept += 100) {
@@ -1620,12 +1629,49 @@ public:
             }
 
             int width = 0, height = 0;
+            QString title;
+            quint32 iconCrc32 = 0;
             QString state;
             try {
-                state = http.remoteRunStatus(m_Session->m_App.id, &width, &height);
+                state = http.remoteRunStatus(m_Session->m_App.id, &width, &height, &title, &iconCrc32);
             } catch (const std::exception& e) {
                 qWarning() << "Remote-run size poll failed (will retry):" << e.what();
                 continue;
+            }
+
+            // Window title/icon mirroring: Titan only reports these for a
+            // capture-window app once the target window is resolved
+            // ("ready"), leaving title empty otherwise -- use that as the
+            // "did this poll report window info at all" signal, since it
+            // always accompanies a real window. Title and icon are tracked
+            // (and only committed to last* / sent onward) independently, so
+            // a failed icon fetch doesn't get silently treated as "already
+            // handled" -- it keeps retrying on the next poll instead of
+            // getting stuck until the icon happens to change again.
+            if (!title.isEmpty()) {
+                bool titleChanged = title != lastTitle;
+                bool iconChanged = iconCrc32 != lastIconCrc32;
+
+                QByteArray iconRgba;
+                bool iconFetched = false;
+                if (iconChanged) {
+                    try {
+                        iconRgba = http.remoteRunIcon(m_Session->m_App.id);
+                        iconFetched = true;
+                    } catch (const std::exception& e) {
+                        qWarning() << "Remote-run icon fetch failed (will retry next poll):" << e.what();
+                    }
+                }
+
+                if (titleChanged || iconFetched) {
+                    if (titleChanged) {
+                        lastTitle = title;
+                    }
+                    if (iconFetched) {
+                        lastIconCrc32 = iconCrc32;
+                    }
+                    Session::notifyWindowInfoChanged(titleChanged ? title : QString(), iconRgba);
+                }
             }
 
             if (state == "ready" && width > 0 && height > 0) {
@@ -1669,6 +1715,31 @@ void Session::notifyVideoContentSizeChanged(int width, int height)
     event.user.code = SDL_CODE_VIDEO_SIZE_CHANGED;
     event.user.data1 = (void*)(uintptr_t)width;
     event.user.data2 = (void*)(uintptr_t)height;
+    SDL_PushEvent(&event);
+}
+
+// Payload for SDL_CODE_WINDOW_INFO_CHANGED -- data1/data2 are only
+// pointer-sized, so title/icon (either of which may be the "unchanged" one
+// for a given poll -- see RemoteRunSizePollThread::run()) are heap-allocated
+// here and freed by the main-loop handler that consumes them.
+struct WindowInfoChangedPayload
+{
+    QString title;    // empty if this update didn't change the title
+    QByteArray iconRgba;  // empty if this update didn't change the icon
+};
+
+void Session::notifyWindowInfoChanged(QString title, QByteArray iconRgba)
+{
+    if (s_ActiveSession == nullptr) {
+        return;
+    }
+
+    auto* payload = new WindowInfoChangedPayload { title, iconRgba };
+
+    SDL_Event event = {};
+    event.type = SDL_USEREVENT;
+    event.user.code = SDL_CODE_WINDOW_INFO_CHANGED;
+    event.user.data1 = payload;
     SDL_PushEvent(&event);
 }
 
@@ -2274,6 +2345,37 @@ void Session::exec()
                         !(SDL_GetWindowFlags(m_Window) & SDL_WINDOW_MAXIMIZED)) {
                     SDL_SetWindowSize(m_Window, newWidth, newHeight);
                 }
+                break;
+            }
+            case SDL_CODE_WINDOW_INFO_CHANGED: {
+                auto* payload = static_cast<WindowInfoChangedPayload*>(event.user.data1);
+
+                if (m_Window != nullptr && !payload->title.isEmpty()) {
+                    // "<app's window title> - リモート" per the window
+                    // title/icon mirroring feature request.
+                    std::string windowTitle = (payload->title + " - リモート").toStdString();
+                    SDL_SetWindowTitle(m_Window, windowTitle.c_str());
+                }
+
+                if (m_Window != nullptr && payload->iconRgba.size() == REMOTE_RUN_ICON_SIZE * REMOTE_RUN_ICON_SIZE * 4) {
+                    // Same raw-RGBA8888-to-SDL_Surface construction as the
+                    // static Moonlight SVG icon at window-creation time
+                    // above -- Titan pre-sizes the pixels to
+                    // REMOTE_RUN_ICON_SIZE, so no scaling is needed here.
+                    SDL_Surface* iconSurface = SDL_CreateRGBSurfaceWithFormatFrom(
+                        payload->iconRgba.data(),
+                        REMOTE_RUN_ICON_SIZE,
+                        REMOTE_RUN_ICON_SIZE,
+                        32,
+                        4 * REMOTE_RUN_ICON_SIZE,
+                        SDL_PIXELFORMAT_RGBA32);
+                    if (iconSurface != nullptr) {
+                        SDL_SetWindowIcon(m_Window, iconSurface);
+                        SDL_FreeSurface(iconSurface);
+                    }
+                }
+
+                delete payload;
                 break;
             }
             case SDL_CODE_RECONNECT_TEARDOWN_DECODER:

@@ -2,6 +2,7 @@
 
 #include <QSemaphore>
 #include <QQuickWindow>
+#include <QByteArray>
 
 #include <Limelight.h>
 #include <opus_multistream.h>
@@ -137,6 +138,15 @@ public:
     // background thread. No-ops if there's no active session.
     static
     void notifyVideoContentSizeChanged(int width, int height);
+
+    // Called from RemoteRunSizePollThread (session.cpp) when the remote-run
+    // target window's title and/or icon (32x32 RGBA8888, from Titan's
+    // /api/custom/remote-run/icon) has changed since the last poll. Takes
+    // ownership of `iconRgba` (may be empty if only the title changed).
+    // Same background-thread-to-SDL-event pattern as
+    // notifyVideoContentSizeChanged() above.
+    static
+    void notifyWindowInfoChanged(QString title, QByteArray iconRgba);
 
 signals:
     void stageStarting(QString stage);
