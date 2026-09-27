@@ -28,6 +28,8 @@
 #define SDL_CODE_GAMECONTROLLER_SET_MOTION_EVENT_STATE 103
 #define SDL_CODE_GAMECONTROLLER_SET_CONTROLLER_LED 104
 #define SDL_CODE_GAMECONTROLLER_SET_ADAPTIVE_TRIGGERS 105
+#define SDL_CODE_VIDEO_SIZE_CHANGED 106
+#define SDL_CODE_RECONNECT_TEARDOWN_DECODER 107
 
 #include <openssl/rand.h>
 
@@ -564,11 +566,12 @@ bool Session::populateDecoderProperties(SDL_Window* window)
     return true;
 }
 
-Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences)
+Session::Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences, QString remoteRunPath)
     : m_Preferences(preferences ? preferences : StreamingPreferences::get()),
       m_IsFullScreen(m_Preferences->windowMode != StreamingPreferences::WM_WINDOWED || !WMUtils::isRunningDesktopEnvironment()),
       m_Computer(computer),
       m_App(app),
+      m_RemoteRunPath(remoteRunPath),
       m_Window(nullptr),
       m_VideoDecoder(nullptr),
       m_DecoderLock(SDL_CreateMutex()),
@@ -1576,6 +1579,147 @@ public:
     Session* m_Session;
 };
 
+#define REMOTE_RUN_SIZE_POLL_INTERVAL_MS 1000
+
+// Continuously tracks a remote-run capture-window app's real window size for
+// the whole lifetime of the stream, not just once before it starts. Titan
+// already measures this directly (GetWindowRect on the resolved HWND, see
+// nvhttp.cpp's remote_run_status()) -- reusing that same measurement here,
+// polled periodically, sidesteps needing to detect a resolution change from
+// the decoded video frames at all. That was the original approach tried
+// here; it turned out to be unreliable for this hardware (D3D11VA) decode
+// path, where frame->width/height never reflected a live mid-stream
+// resolution change even though the server-side encoder demonstrably had
+// re-encoded at the new size (confirmed by an unconditional diagnostic that
+// never fired across several resize tests) -- likely because the decoder's
+// hardware surface pool is sized once at connection setup. Measuring the
+// window directly on the server side avoids relying on that fragile signal
+// entirely.
+class RemoteRunSizePollThread : public QThread
+{
+public:
+    RemoteRunSizePollThread(Session* session) :
+        QThread(nullptr),
+        m_Session(session)
+    {
+        setObjectName("RemoteRun Size Poll");
+    }
+
+    void run() override
+    {
+        NvHTTP http(m_Session->m_Computer);
+        int lastWidth = m_Session->m_StreamConfig.width;
+        int lastHeight = m_Session->m_StreamConfig.height;
+
+        while (!isInterruptionRequested()) {
+            for (int slept = 0; slept < REMOTE_RUN_SIZE_POLL_INTERVAL_MS && !isInterruptionRequested(); slept += 100) {
+                QThread::msleep(100);
+            }
+            if (isInterruptionRequested()) {
+                break;
+            }
+
+            int width = 0, height = 0;
+            QString state;
+            try {
+                state = http.remoteRunStatus(m_Session->m_App.id, &width, &height);
+            } catch (const std::exception& e) {
+                qWarning() << "Remote-run size poll failed (will retry):" << e.what();
+                continue;
+            }
+
+            if (state == "ready" && width > 0 && height > 0) {
+                width &= ~0x1;
+                height &= ~0x1;
+                if (width != lastWidth || height != lastHeight) {
+                    lastWidth = width;
+                    lastHeight = height;
+                    Session::notifyVideoContentSizeChanged(width, height);
+
+                    // Resize the client window (above) is cosmetic -- the
+                    // decoded video content itself won't reflect the new
+                    // size until the stream is renegotiated at it, since
+                    // GameStream fixes STREAM_CONFIGURATION for the life of
+                    // a connection. Do that reconnect here; this thread has
+                    // nothing else to do while it's in flight, and we don't
+                    // want to start a second one before this one finishes.
+                    if (!m_Session->reconnectAtResolution(width, height)) {
+                        qWarning() << "Resize-triggered reconnect failed; session is ending";
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    Session* m_Session;
+};
+
+void Session::notifyVideoContentSizeChanged(int width, int height)
+{
+    if (s_ActiveSession == nullptr) {
+        return;
+    }
+
+    // Called from RemoteRunSizePollThread, not the main thread -- push an
+    // SDL event rather than touching the window directly, matching every
+    // other cross-thread-to-main-loop call in this file (see clRumble()).
+    SDL_Event event = {};
+    event.type = SDL_USEREVENT;
+    event.user.code = SDL_CODE_VIDEO_SIZE_CHANGED;
+    event.user.data1 = (void*)(uintptr_t)width;
+    event.user.data2 = (void*)(uintptr_t)height;
+    SDL_PushEvent(&event);
+}
+
+#define REMOTE_RUN_READY_POLL_INTERVAL_MS 1000
+#define REMOTE_RUN_READY_MAX_ATTEMPTS 30  // ~30s
+
+// Called in a non-main thread (see startConnectionAsync() below). Blocking
+// here (via QThread::msleep(), not a nested QEventLoop) is fine -- this
+// thread has no UI/event-loop responsibilities of its own.
+bool Session::waitForRemoteRunReady(NvHTTP& http, int appId)
+{
+    for (int attempt = 0; attempt < REMOTE_RUN_READY_MAX_ATTEMPTS; attempt++) {
+        QString state;
+        int targetWidth = 0;
+        int targetHeight = 0;
+        try {
+            state = http.remoteRunStatus(appId, &targetWidth, &targetHeight);
+        } catch (const std::exception& e) {
+            qWarning() << "Remote-run status check failed:" << e.what();
+            return false;
+        }
+
+        if (state == "ready") {
+            // Found in live testing: without this, the client keeps
+            // streaming at whatever resolution it requested before this
+            // app's window existed (StreamingPreferences' default), and the
+            // app's actual content -- which Titan's WGC capture always
+            // sizes to the real window, regardless of what was requested --
+            // ends up stretched into a mismatched window. m_StreamConfig is
+            // still read fresh by LiStartConnection() below and by
+            // exec()'s getWindowDimensions() call (after this function
+            // returns), so updating it here still takes effect for both
+            // the server negotiation and the client's own window size.
+            if (targetWidth > 0 && targetHeight > 0) {
+                m_StreamConfig.width = targetWidth & ~0x1;  // even width, matching getWindowDimensions()'s own rounding
+                m_StreamConfig.height = targetHeight & ~0x1;
+                qInfo() << "Remote-run app window resolved to" << m_StreamConfig.width << "x" << m_StreamConfig.height;
+            }
+            return true;
+        } else if (state == "failed") {
+            qWarning() << "Titan reported the remote-run app as failed to become ready";
+            return false;
+        }
+
+        qInfo() << "Waiting for remote-run app to become ready (state:" << state << ")";
+        QThread::msleep(REMOTE_RUN_READY_POLL_INTERVAL_MS);
+    }
+
+    return false;
+}
+
 // Called in a non-main thread
 bool Session::startConnectionAsync()
 {
@@ -1608,9 +1752,9 @@ bool Session::startConnectionAsync()
     }
 
     QString rtspSessionUrl;
+    NvHTTP http(m_Computer);
 
     try {
-        NvHTTP http(m_Computer);
         http.startApp(m_Computer->currentGameId != 0 ? "resume" : "launch",
                       m_Computer->isNvidiaServerSoftware,
                       m_App.id, &m_StreamConfig,
@@ -1619,6 +1763,18 @@ bool Session::startConnectionAsync()
                       m_InputHandler->getAttachedGamepadMask(),
                       !m_Preferences->multiController,
                       rtspSessionUrl);
+
+        // agent.md sections 8.3/11.4: startApp() above just returns once
+        // Titan has spawned the process -- for a capture-window remote-run
+        // app, the target HWND may not exist yet (launcher -> game
+        // handoff). Wait for Titan to report "ready" before proceeding with
+        // the rest of the connection sequence below, rather than racing
+        // ahead into a stream of whatever WGC happens to be capturing (or
+        // nothing) at this instant.
+        if (!m_RemoteRunPath.isEmpty() && !waitForRemoteRunReady(http, m_App.id)) {
+            emit displayLaunchError(tr("Remote-run app \"%1\" did not become ready to stream in time").arg(m_App.name));
+            return false;
+        }
     } catch (const GfeHttpResponseException& e) {
         emit displayLaunchError(tr("Host returned error: %1").arg(e.toQString()));
         return false;
@@ -1703,6 +1859,20 @@ bool Session::startConnectionAsync()
                                                                          false);
     }
 
+    // moonlight-common-c's fixupMissingCallbacks() (FakeCallbacks.c) patches
+    // a NULL submitDecodeUnit with a fake stub *in place* on drCallbacks --
+    // permanently mutating m_VideoCallbacks, since it's passed by pointer.
+    // That's harmless for a single LiStartConnection() per process, but on
+    // a reconnect (reconnectAtResolution()) it leaves submitDecodeUnit
+    // non-null from the *previous* connection, which then collides with
+    // CAPABILITY_PULL_RENDERER here (Connection.c rejects the combination
+    // outright). Re-assert what populateDecoderProperties() originally
+    // decided every time, so a second (or later) LiStartConnection() call
+    // sees the same callbacks the first one did.
+    if (m_VideoCallbacks.capabilities & CAPABILITY_PULL_RENDERER) {
+        m_VideoCallbacks.submitDecodeUnit = nullptr;
+    }
+
     int err = LiStartConnection(&hostInfo, &m_StreamConfig, &k_ConnCallbacks,
                                 &m_VideoCallbacks, &m_AudioCallbacks,
                                 NULL, 0, NULL, 0);
@@ -1713,6 +1883,53 @@ bool Session::startConnectionAsync()
     }
 
     emit connectionStarted();
+    return true;
+}
+
+// Called from RemoteRunSizePollThread, not the main thread. Rebuilds the
+// stream connection at a new resolution so the decoded VIDEO CONTENT
+// follows a resize, not just the client window: GameStream fixes
+// STREAM_CONFIGURATION for the life of a connection (see this function's
+// existing "resume" support above, reused here), so picking up a new size
+// means tearing the connection down and renegotiating, not adjusting
+// anything in place.
+bool Session::reconnectAtResolution(int width, int height)
+{
+    qInfo() << "Reconnecting stream at new resolution:" << width << "x" << height;
+
+    // DeferredSessionCleanupTask asserts the video decoder is already
+    // destroyed before it calls LiStopConnection(), because the decode
+    // thread calls moonlight-common-c APIs that are only valid between
+    // LiStartConnection() and LiStopConnection(). The decoder is
+    // main-thread-owned (D3D/SDL), so hand teardown off to it and wait
+    // rather than deleting it from here.
+    SDL_Event teardownEvent = {};
+    teardownEvent.type = SDL_USEREVENT;
+    teardownEvent.user.code = SDL_CODE_RECONNECT_TEARDOWN_DECODER;
+    SDL_PushEvent(&teardownEvent);
+    m_ReconnectDecoderTornDownSem.acquire();
+
+    LiStopConnection();
+
+    m_StreamConfig.width = width;
+    m_StreamConfig.height = height;
+
+    if (!startConnectionAsync()) {
+        qWarning() << "Reconnect failed; ending session";
+        m_UnexpectedTermination = true;
+        emit displayLaunchError(tr("Lost connection to the host while applying the new stream resolution."));
+        setShouldExit(false);
+        return false;
+    }
+
+    // Bring the decoder back at the freshly-negotiated resolution by
+    // reusing the exact SDL_RENDER_DEVICE_RESET path: it already flushes
+    // stray window events, picks a decoder sized for the current
+    // m_ActiveVideoWidth/Height (updated by drSetup(), called synchronously
+    // inside the LiStartConnection() above), and requests a fresh IDR frame.
+    SDL_Event resetEvent = {};
+    resetEvent.type = SDL_RENDER_DEVICE_RESET;
+    SDL_PushEvent(&resetEvent);
     return true;
 }
 
@@ -1951,6 +2168,14 @@ void Session::exec()
     // (m_UnexpectedTermination is set back to true).
     m_UnexpectedTermination = false;
 
+    // agent.md sections 7.8/11.5: keep the client window matching a
+    // remote-run capture-window app's real size for the whole session, not
+    // just at connection setup. See RemoteRunSizePollThread's doc comment.
+    if (!m_RemoteRunPath.isEmpty()) {
+        m_RemoteRunSizePollThread = new RemoteRunSizePollThread(this);
+        m_RemoteRunSizePollThread->start();
+    }
+
     // Start rich presence to indicate we're in game
     RichPresenceManager presence(*m_Preferences, m_App.name);
 
@@ -2035,6 +2260,31 @@ void Session::exec()
             case SDL_CODE_GAMECONTROLLER_SET_ADAPTIVE_TRIGGERS:
                 m_InputHandler->setAdaptiveTriggers((uint16_t)(uintptr_t)event.user.data1,
                                                     (DualSenseOutputReport *)event.user.data2);
+                break;
+            case SDL_CODE_VIDEO_SIZE_CHANGED: {
+                int newWidth = (int)(uintptr_t)event.user.data1;
+                int newHeight = (int)(uintptr_t)event.user.data2;
+
+                // Only follow the content size in ordinary windowed mode --
+                // resizing out of fullscreen/maximized would be surprising,
+                // and fullscreen's own scale-to-display-mode behavior
+                // already shows the content without our involvement.
+                if (m_Window != nullptr &&
+                        !(SDL_GetWindowFlags(m_Window) & m_FullScreenFlag) &&
+                        !(SDL_GetWindowFlags(m_Window) & SDL_WINDOW_MAXIMIZED)) {
+                    SDL_SetWindowSize(m_Window, newWidth, newHeight);
+                }
+                break;
+            }
+            case SDL_CODE_RECONNECT_TEARDOWN_DECODER:
+                // See reconnectAtResolution(): destroy the decoder here (on
+                // the main thread, where it must be destroyed) and let that
+                // thread know it's now safe to call LiStopConnection().
+                SDL_LockMutex(m_DecoderLock);
+                delete m_VideoDecoder;
+                m_VideoDecoder = nullptr;
+                SDL_UnlockMutex(m_DecoderLock);
+                m_ReconnectDecoderTornDownSem.release();
                 break;
             default:
                 SDL_assert(false);
@@ -2308,6 +2558,15 @@ void Session::exec()
     }
 
 DispatchDeferredCleanup:
+    // Stop the remote-run size poll thread before anything it might touch
+    // (m_Window) gets torn down below.
+    if (m_RemoteRunSizePollThread != nullptr) {
+        m_RemoteRunSizePollThread->requestInterruption();
+        m_RemoteRunSizePollThread->wait();
+        delete m_RemoteRunSizePollThread;
+        m_RemoteRunSizePollThread = nullptr;
+    }
+
     // Switch back to synchronous logging mode
     StreamUtils::exitAsyncLoggingMode();
 

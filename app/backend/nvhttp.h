@@ -167,9 +167,23 @@ public:
     // REMOTE_RUN_NOT_REGISTERED) or QtNetworkReplyException on a lower-level
     // network failure. See docs/research/poc6-remote-run.md (Destiny
     // superproject) for the endpoint's exact contract and why this returns
-    // a name rather than just an app ID.
+    // a name rather than just an app ID. When appIdOut is non-null, it's
+    // populated with the resolved app_id so the caller can poll
+    // remoteRunStatus() before starting the stream (agent.md section 11.4).
     QString
-    remoteRun(QString remotePath);
+    remoteRun(QString remotePath, int* appIdOut = nullptr);
+
+    // agent.md sections 8.3/11.4: polls Titan's launch-readiness state for a
+    // remote-run-resolved app_id ("starting"/"ready"/"failed") once /launch
+    // has been called, so the caller can wait for the capture-window target
+    // to actually be resolved before starting the stream. Throws the same
+    // exceptions as remoteRun() on network/protocol failure. When the
+    // state is "ready" for a capture-window app, widthOut/heightOut (if
+    // non-null) are populated with the resolved window's real size, so the
+    // caller can size its own stream/client window to match instead of
+    // stretching the app's actual content into a mismatched resolution.
+    QString
+    remoteRunStatus(int appId, int* widthOut = nullptr, int* heightOut = nullptr);
 
     void
     startApp(QString verb,

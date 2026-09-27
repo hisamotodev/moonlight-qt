@@ -13,6 +13,7 @@
 #include <QImageReader>
 #include <QtEndian>
 #include <QNetworkProxy>
+#include <QUrlQuery>
 
 #define FAST_FAIL_TIMEOUT_MS 2000
 #define REQUEST_TIMEOUT_MS 5000
@@ -271,7 +272,7 @@ NvHTTP::quitApp()
 }
 
 QString
-NvHTTP::remoteRun(QString remotePath)
+NvHTTP::remoteRun(QString remotePath, int* appIdOut)
 {
     // Titan's remote-run endpoint takes a JSON POST body and returns JSON,
     // unlike every other NvHTTP call in this file (GFE-style GET + XML) --
@@ -341,7 +342,82 @@ NvHTTP::remoteRun(QString remotePath)
         throw GfeHttpResponseException(httpStatus, message);
     }
 
+    if (appIdOut) {
+        *appIdOut = responseObj.value("app_id").toInt();
+    }
+
     return responseObj.value("name").toString();
+}
+
+QString
+NvHTTP::remoteRunStatus(int appId, int* widthOut, int* heightOut)
+{
+    // Same idiom as remoteRun() above (JSON, not GFE-style GET+XML) -- see
+    // its comment for why this doesn't use openConnection()/openConnectionToString().
+    QUrl url(m_BaseUrlHttps);
+    url.setPath("/api/custom/remote-run/status");
+    QUrlQuery query;
+    query.addQueryItem("app_id", QString::number(appId));
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    request.setSslConfiguration(IdentityManager::get()->getSslConfig());
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+#endif
+#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
+    request.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, 0);
+#endif
+
+    auto sslErrorsConnection = connect(m_Nam, &QNetworkAccessManager::sslErrors, this, &NvHTTP::handleSslErrors);
+    QNetworkReply* reply = m_Nam->get(request);
+
+    QEventLoop loop;
+    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &loop, &QEventLoop::quit);
+    QTimer::singleShot(REQUEST_TIMEOUT_MS, &loop, &QEventLoop::quit);
+    loop.exec(QEventLoop::ExcludeUserInputEvents);
+
+    if (!reply->isFinished()) {
+        qWarning() << "Aborting timed out remote-run status request for" << url.toString();
+        reply->abort();
+    }
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 3, 0)
+    m_Nam->clearAccessCache();
+#endif
+    disconnect(sslErrorsConnection);
+
+    QByteArray responseBody = reply->readAll();
+    int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QNetworkReply::NetworkError netError = reply->error();
+    delete reply;
+
+    QJsonParseError parseError {};
+    QJsonDocument responseDoc = QJsonDocument::fromJson(responseBody, &parseError);
+
+    if (parseError.error != QJsonParseError::NoError) {
+        throw QtNetworkReplyException(netError != QNetworkReply::NoError ? netError : QNetworkReply::UnknownContentError,
+                                       "Remote-run status request failed: " + parseError.errorString());
+    }
+
+    QJsonObject responseObj = responseDoc.object();
+
+    if (httpStatus != 200) {
+        QString errorCode = responseObj.value("error").toString("REMOTE_RUN_STATUS_FAILED");
+        QString message = responseObj.value("message").toString(errorCode);
+        throw GfeHttpResponseException(httpStatus, message);
+    }
+
+    if (widthOut && responseObj.contains("width")) {
+        *widthOut = responseObj.value("width").toInt();
+    }
+    if (heightOut && responseObj.contains("height")) {
+        *heightOut = responseObj.value("height").toInt();
+    }
+
+    return responseObj.value("state").toString();
 }
 
 QVector<NvDisplayMode>

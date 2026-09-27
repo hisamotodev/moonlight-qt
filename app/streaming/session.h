@@ -11,6 +11,9 @@
 #include "audio/renderers/renderer.h"
 #include "video/overlaymanager.h"
 
+class NvHTTP;
+class QThread;
+
 class SupportedVideoFormatList : public QList<int>
 {
 public:
@@ -96,9 +99,10 @@ class Session : public QObject
     friend class SdlInputHandler;
     friend class DeferredSessionCleanupTask;
     friend class AsyncConnectionStartThread;
+    friend class RemoteRunSizePollThread;
 
 public:
-    explicit Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences = nullptr);
+    explicit Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences = nullptr, QString remoteRunPath = QString());
     virtual ~Session();
 
     Q_INVOKABLE bool initialize(QQuickWindow* qtWindow);
@@ -125,6 +129,15 @@ public:
 
     void setShouldExit(bool quitHostApp = false);
 
+    // Called from RemoteRunSizePollThread (session.cpp) when Titan's own
+    // window-size measurement (GetWindowRect on the resolved HWND, via
+    // /api/custom/remote-run/status -- see nvhttp.cpp on the Titan side)
+    // reports a different size than last observed. Pushes an SDL event
+    // rather than touching the window directly, since this runs on a
+    // background thread. No-ops if there's no active session.
+    static
+    void notifyVideoContentSizeChanged(int width, int height);
+
 signals:
     void stageStarting(QString stage);
 
@@ -147,6 +160,25 @@ private:
     void exec();
 
     bool startConnectionAsync();
+
+    // agent.md sections 8.3/11.4: for a remote-run launch, polls Titan's
+    // launch-readiness state (capture-window target resolved, etc.) after
+    // startApp() actually launches the app but before proceeding with the
+    // rest of the connection sequence. Called on startConnectionAsync()'s
+    // background thread, so a synchronous poll loop here doesn't block the
+    // UI -- see NvHTTP::remoteRunStatus().
+    bool waitForRemoteRunReady(NvHTTP& http, int appId);
+
+    // Called from RemoteRunSizePollThread (session.cpp) when the real window
+    // size has changed and the negotiated stream resolution should follow.
+    // GameStream fixes STREAM_CONFIGURATION for the life of a connection, so
+    // this tears the current connection down and renegotiates a new one
+    // (reusing startConnectionAsync()'s existing "resume" support) rather
+    // than trying to change anything in place. Runs on the poll thread, not
+    // the main thread -- see the .cpp for the decoder-teardown handshake
+    // this needs with the main thread before it's safe to call
+    // LiStopConnection().
+    bool reconnectAtResolution(int width, int height);
 
     bool validateLaunch(SDL_Window* testWindow);
 
@@ -251,7 +283,10 @@ private:
     AUDIO_RENDERER_CALLBACKS m_AudioCallbacks;
     NvComputer* m_Computer;
     NvApp m_App;
+    QString m_RemoteRunPath;
     SDL_Window* m_Window;
+    QThread* m_RemoteRunSizePollThread = nullptr;
+    QSemaphore m_ReconnectDecoderTornDownSem {0};
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
     bool m_AudioDisabled;

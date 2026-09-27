@@ -122,7 +122,12 @@ public:
                     m_TimeoutTimer->stop();
                     if (isNotStreaming() || isStreamingApp(app)) {
                         m_State = StateStartSession;
-                        session = new Session(m_Computer, app, m_Preferences);
+                        // agent.md sections 8.3/11.4: the remote-run-readiness
+                        // wait lives inside Session::startConnectionAsync(),
+                        // right after the real /launch call it makes -- not
+                        // here, since /launch hasn't happened yet at this
+                        // point (only pass the path through).
+                        session = new Session(m_Computer, app, m_Preferences, m_RemoteRunPath);
                         emit q->sessionCreated(app.name, session);
                     } else {
                         emit q->appQuitRequired(getCurrentAppName());
