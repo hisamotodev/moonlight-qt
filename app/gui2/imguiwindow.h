@@ -13,6 +13,7 @@ class SystemProperties;
 class NvComputer;
 class PcListScreen;
 class AppListScreen;
+class SettingsScreen;
 class Session;
 
 // Hunter's new Dear ImGui frontend (replacing the QML/QtQuick UI, see the
@@ -75,6 +76,8 @@ private:
     SystemProperties* m_SystemProperties;
     PcListScreen* m_PcListScreen;
     AppListScreen* m_AppListScreen;
+    SettingsScreen* m_SettingsScreen;
+    bool m_ShowSettings;
 
     // Session launch state. Mirrors StreamSegue.qml's stageText/spinner
     // handling, minus toasts/warnings (not carried over to v1).

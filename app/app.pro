@@ -207,6 +207,7 @@ SOURCES += \
     gui2/imguiwindow.cpp \
     gui2/pclistscreen.cpp \
     gui2/applistscreen.cpp \
+    gui2/settingsscreen.cpp \
     wm.cpp
 
 HEADERS += \
@@ -247,7 +248,8 @@ HEADERS += \
     backend/systemproperties.h \
     gui2/imguiwindow.h \
     gui2/pclistscreen.h \
-    gui2/applistscreen.h
+    gui2/applistscreen.h \
+    gui2/settingsscreen.h
 
 # Platform-specific renderers and decoders
 ffmpeg {

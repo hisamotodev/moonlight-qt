@@ -1,6 +1,7 @@
 #include "imguiwindow.h"
 #include "pclistscreen.h"
 #include "applistscreen.h"
+#include "settingsscreen.h"
 
 #include "backend/computermanager.h"
 #include "backend/systemproperties.h"
@@ -22,6 +23,8 @@ ImGuiWindow::ImGuiWindow(QObject* parent)
       m_SystemProperties(nullptr),
       m_PcListScreen(nullptr),
       m_AppListScreen(nullptr),
+      m_SettingsScreen(nullptr),
+      m_ShowSettings(false),
       m_ActiveSession(nullptr),
       m_SessionInFlight(false),
       m_ShowSessionErrorDialog(false)
@@ -87,6 +90,8 @@ bool ImGuiWindow::initialize()
     connect(m_PcListScreen, &PcListScreen::computerSelected,
             this, &ImGuiWindow::handleComputerSelected);
 
+    m_SettingsScreen = new SettingsScreen(this);
+
     m_ComputerManager->startPolling();
 
     m_Initialized = true;
@@ -143,10 +148,23 @@ void ImGuiWindow::renderFrame()
     if (m_SessionInFlight) {
         renderSessionStatusOverlay();
     } else {
+        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::Begin("##menubar", nullptr,
+                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing);
+        if (ImGui::Button(m_ShowSettings ? "Hide Settings" : "Settings")) {
+            m_ShowSettings = !m_ShowSettings;
+        }
+        ImGui::End();
+
         if (m_AppListScreen) {
             m_AppListScreen->render();
         } else if (m_PcListScreen) {
             m_PcListScreen->render();
+        }
+
+        if (m_SettingsScreen) {
+            m_SettingsScreen->render(&m_ShowSettings);
         }
 
         // Shown once a session that failed (or logged a launch error)
