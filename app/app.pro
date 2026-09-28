@@ -205,6 +205,7 @@ SOURCES += \
     streaming/video/overlaymanager.cpp \
     backend/systemproperties.cpp \
     gui2/imguiwindow.cpp \
+    gui2/pclistscreen.cpp \
     wm.cpp
 
 HEADERS += \
@@ -243,7 +244,8 @@ HEADERS += \
     gui/sdlgamepadkeynavigation.h \
     streaming/video/overlaymanager.h \
     backend/systemproperties.h \
-    gui2/imguiwindow.h
+    gui2/imguiwindow.h \
+    gui2/pclistscreen.h
 
 # Platform-specific renderers and decoders
 ffmpeg {

@@ -1,4 +1,5 @@
 #include "imguiwindow.h"
+#include "pclistscreen.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -10,7 +11,8 @@ ImGuiWindow::ImGuiWindow(QObject* parent)
       m_Window(nullptr),
       m_Renderer(nullptr),
       m_WindowId(0),
-      m_Initialized(false)
+      m_Initialized(false),
+      m_PcListScreen(nullptr)
 {
     connect(&m_Timer, &QTimer::timeout, this, &ImGuiWindow::tick);
 }
@@ -52,6 +54,9 @@ bool ImGuiWindow::initialize()
 
     ImGui_ImplSDL2_InitForSDLRenderer(m_Window, m_Renderer);
     ImGui_ImplSDLRenderer2_Init(m_Renderer);
+
+    m_PcListScreen = new PcListScreen(this);
+    m_PcListScreen->start();
 
     m_Initialized = true;
 
@@ -104,12 +109,9 @@ void ImGuiWindow::renderFrame()
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
-    // Placeholder content for Phase 0 verification only -- replaced by the
-    // real PC list / app grid / settings screens in later phases.
-    ImGui::Begin("Hunter (ImGui frontend groundwork)");
-    ImGui::Text("Phase 0: SDL2 + Dear ImGui window driven by a Qt timer tick.");
-    ImGui::Text("Qt's event loop (ComputerManager, NvHTTP, ...) keeps running normally.");
-    ImGui::End();
+    if (m_PcListScreen) {
+        m_PcListScreen->render();
+    }
 
     ImGui::Render();
 

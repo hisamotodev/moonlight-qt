@@ -7,6 +7,7 @@
 struct SDL_Window;
 struct SDL_Renderer;
 union SDL_Event;
+class PcListScreen;
 
 // Phase 0 groundwork for Hunter's new Dear ImGui frontend (replacing the
 // QML/QtQuick UI, see the project plan). Owns its own SDL2 window +
@@ -47,4 +48,5 @@ private:
     uint32_t m_WindowId;
     QTimer m_Timer;
     bool m_Initialized;
+    PcListScreen* m_PcListScreen;
 };
