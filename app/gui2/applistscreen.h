@@ -29,6 +29,11 @@ public:
 
     void render();
 
+    // The PC this panel is browsing. Used by ImGuiWindow to skip tearing
+    // down and recreating this screen (losing scroll position / any open
+    // dialog) when the user re-clicks the PC that's already shown.
+    NvComputer* computer() const { return m_Computer; }
+
 signals:
     // The user asked to go back to the PC list (Back button, or the
     // computer went offline/unpaired while we were viewing it).

@@ -100,9 +100,16 @@ void AppListScreen::renderAppList()
     }
 
     const QByteArray windowTitle = title.toUtf8();
-    ImGui::Begin(windowTitle.constData());
+    // Fixed docked pane alongside the PC list (see
+    // ImGuiWindow::renderFrame()) -- see PcListScreen::renderPcList() for
+    // why NoMove/NoResize/NoCollapse are needed here too.
+    ImGui::Begin(windowTitle.constData(), nullptr,
+                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
 
-    if (ImGui::Button("<- Back")) {
+    // The PC list is always visible now (side-by-side layout), so this no
+    // longer navigates "back" to it -- it just closes this panel and lets
+    // the PC list reclaim the full width.
+    if (ImGui::Button("Close")) {
         emit backRequested();
     }
 

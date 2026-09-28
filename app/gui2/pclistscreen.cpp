@@ -14,7 +14,8 @@ PcListScreen::PcListScreen(ComputerManager* computerManager, QObject* parent)
       m_ShowPairDialog(false),
       m_ShowErrorDialog(false),
       m_ShowDeleteConfirm(false),
-      m_DeleteTarget(nullptr)
+      m_DeleteTarget(nullptr),
+      m_SelectedComputer(nullptr)
 {
     m_AddPcAddressBuf[0] = '\0';
 
@@ -41,9 +42,19 @@ void PcListScreen::render()
     renderDeleteConfirmDialog();
 }
 
+void PcListScreen::clearSelection()
+{
+    m_SelectedComputer = nullptr;
+}
+
 void PcListScreen::renderPcList()
 {
-    ImGui::Begin("Computers");
+    // Fixed docked pane (see ImGuiWindow::renderFrame()): position/size are
+    // pinned every frame via SetNextWindowPos/SetNextWindowSize(...,
+    // ImGuiCond_Always), so let the window resist the drag/resize/collapse
+    // gestures its title bar would otherwise still advertise.
+    ImGui::Begin("Computers", nullptr,
+                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
 
     if (ImGui::Button("Add PC by IP...")) {
         m_AddPcAddressBuf[0] = '\0';
@@ -95,8 +106,9 @@ void PcListScreen::renderPcList()
         const float deleteButtonWidth = ImGui::CalcTextSize("Delete").x + ImGui::GetStyle().FramePadding.x * 2.0f;
         const float selectableWidth = ImGui::GetContentRegionAvail().x - deleteButtonWidth - ImGui::GetStyle().ItemSpacing.x;
 
+        const bool isSelected = (computer == m_SelectedComputer);
         const QByteArray label = (name + QStringLiteral("  --  ") + status).toUtf8();
-        if (ImGui::Selectable(label.constData(), false, 0, ImVec2(selectableWidth, 0))) {
+        if (ImGui::Selectable(label.constData(), isSelected, 0, ImVec2(selectableWidth, 0))) {
             if (online) {
                 if (!supported) {
                     m_ErrorText = QStringLiteral(
@@ -105,6 +117,7 @@ void PcListScreen::renderPcList()
                     m_ErrorHelpText.clear();
                     m_ShowErrorDialog = true;
                 } else if (paired) {
+                    m_SelectedComputer = computer;
                     emit computerSelected(computer);
                 } else {
                     const QString pin = m_ComputerManager->generatePinString();

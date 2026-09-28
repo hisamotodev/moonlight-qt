@@ -26,6 +26,12 @@ public:
     // Draws this frame's ImGui widgets. Called every tick.
     void render();
 
+    // Clears the row highlight applied to the last-selected PC. Called by
+    // ImGuiWindow when the app list panel closes (Back/Close button, or the
+    // selected PC went offline/unpaired), so a stale highlight doesn't
+    // linger on a PC that's no longer being browsed.
+    void clearSelection();
+
 signals:
     // The user picked an online, paired PC to browse its app list.
     void computerSelected(NvComputer* computer);
@@ -56,4 +62,9 @@ private:
     bool m_ShowDeleteConfirm;
     NvComputer* m_DeleteTarget;
     QString m_DeleteTargetName;
+
+    // The PC currently being browsed in the (now always-visible) app list
+    // panel, purely for row highlighting -- ImGuiWindow owns the actual
+    // AppListScreen lifecycle.
+    NvComputer* m_SelectedComputer;
 };

@@ -181,19 +181,39 @@ void ImGuiWindow::renderFrame()
     if (m_SessionInFlight) {
         renderSessionStatusOverlay();
     } else {
-        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-        ImGui::Begin("##menubar", nullptr,
-                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing);
-        if (ImGui::Button(m_ShowSettings ? "Hide Settings" : "Settings")) {
-            m_ShowSettings = !m_ShowSettings;
+        // A real main menu bar (rather than the old floating auto-resize
+        // "##menubar" window) reserves its height from the main viewport's
+        // work area automatically -- GetMainViewport()->WorkPos/WorkSize
+        // below already exclude it, so the PC list / app list panes never
+        // have to know about it explicitly.
+        if (ImGui::BeginMainMenuBar()) {
+            if (ImGui::MenuItem(m_ShowSettings ? "Hide Settings" : "Settings")) {
+                m_ShowSettings = !m_ShowSettings;
+            }
+            ImGui::EndMainMenuBar();
         }
-        ImGui::End();
+
+        // Side-by-side layout: once a PC is selected, its app list docks
+        // into the remaining space to the right of a narrower PC list
+        // column, instead of replacing it outright -- switching PCs (or
+        // just glancing at what else is available) no longer requires
+        // leaving the app list first.
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        constexpr float pcListWidth = 320.0f;
+
+        if (m_PcListScreen) {
+            const ImVec2 size = m_AppListScreen
+                    ? ImVec2(pcListWidth, viewport->WorkSize.y)
+                    : viewport->WorkSize;
+            ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+            m_PcListScreen->render();
+        }
 
         if (m_AppListScreen) {
+            ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + pcListWidth, viewport->WorkPos.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x - pcListWidth, viewport->WorkSize.y), ImGuiCond_Always);
             m_AppListScreen->render();
-        } else if (m_PcListScreen) {
-            m_PcListScreen->render();
         }
 
         if (m_SettingsScreen) {
@@ -257,6 +277,15 @@ void ImGuiWindow::renderSessionStatusOverlay()
 
 void ImGuiWindow::handleComputerSelected(NvComputer* computer)
 {
+    // The PC list stays visible now (side-by-side layout), so re-clicking
+    // the PC already shown on the right is a normal, frequent interaction
+    // rather than a one-shot navigation -- don't tear down and recreate the
+    // panel (losing scroll position or an open Remote Run/quit dialog) for
+    // a no-op selection.
+    if (m_AppListScreen && m_AppListScreen->computer() == computer) {
+        return;
+    }
+
     delete m_AppListScreen;
     m_AppListScreen = new AppListScreen(m_ComputerManager, computer, this);
     connect(m_AppListScreen, &AppListScreen::backRequested,
@@ -269,6 +298,10 @@ void ImGuiWindow::handleAppListBackRequested()
 {
     delete m_AppListScreen;
     m_AppListScreen = nullptr;
+
+    if (m_PcListScreen) {
+        m_PcListScreen->clearSelection();
+    }
 }
 
 void ImGuiWindow::handleLaunchRequested(Session* session, QString appName)

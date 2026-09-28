@@ -27,10 +27,12 @@ class Session;
 // stops firing until Session::exec() returns control to Qt's event loop,
 // exactly like the QML UI's event processing does today.
 //
-// Also owns the shared ComputerManager/SystemProperties instances and the
-// PcList <-> AppList navigation between them, plus the session launch
-// lifecycle (the same six signals StreamSegue.qml wires up), since both
-// screens need to hand off into the same "start a session" path.
+// Also owns the shared ComputerManager/SystemProperties instances and lays
+// out PcListScreen/AppListScreen side by side once a PC is selected (a
+// narrow PC list column plus the app list docked to its right, rather than
+// one replacing the other), plus the session launch lifecycle (the same six
+// signals StreamSegue.qml wires up), since both screens need to hand off
+// into the same "start a session" path.
 class ImGuiWindow : public QObject
 {
     Q_OBJECT
