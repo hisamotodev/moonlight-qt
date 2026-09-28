@@ -102,6 +102,17 @@ bool ImGuiWindow::initialize()
     m_SystemProperties = new SystemProperties();
     m_SystemProperties->startAsyncLoad();
 
+    // SystemProperties' constructor creates a hidden test window for the
+    // decoder probe (StreamUtils::createTestWindow()), which unconditionally
+    // calls SDL_StopTextInput() to avoid triggering an IME popup on that
+    // window. SDL's text-input-enabled state is process-global, not
+    // per-window, so that leaves it off for *our* window too -- and unlike
+    // QML (whose TextFields never went through SDL text input at all), every
+    // ImGui::InputText() in the new UI depends on SDL_TEXTINPUT events, so
+    // this silently broke all keyboard input into them. Re-enable it now
+    // that the probe's test window is gone.
+    SDL_StartTextInput();
+
     m_PcListScreen = new PcListScreen(m_ComputerManager, this);
     connect(m_PcListScreen, &PcListScreen::computerSelected,
             this, &ImGuiWindow::handleComputerSelected);
@@ -336,6 +347,14 @@ void ImGuiWindow::handleSessionFinished(int portTestResult)
     }
 
     SDL_ShowWindow(m_Window);
+
+    // Session::start() also unconditionally calls SDL_StopTextInput() before
+    // it creates its own decoder-probe test window (same rationale as the
+    // one in initialize() above), which leaves our InputText widgets unable
+    // to receive keystrokes for the rest of the process once a stream ends.
+    // Undo it now that we're back in the browsing window.
+    SDL_StartTextInput();
+
     m_SessionInFlight = false;
 
     if (!m_SessionErrorText.isEmpty()) {
