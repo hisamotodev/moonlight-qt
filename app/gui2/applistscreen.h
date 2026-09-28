@@ -2,6 +2,9 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariant>
+
+#include "backend/nvapp.h"
 
 class ComputerManager;
 class NvComputer;
@@ -39,11 +42,18 @@ signals:
 
 private slots:
     void handleComputerStateChanged(NvComputer* computer);
+    void handleQuitAppCompleted(QVariant error);
 
 private:
     void renderAppList();
     void renderRemoteRunPopup();
     void renderErrorDialog();
+    void renderQuitConfirmDialog();
+
+    // Launches app now if it's already the running app (or nothing else
+    // is running), otherwise defers to the quit-confirmation dialog first
+    // -- mirrors AppView.qml's launchOrResumeSelectedApp()/quitAppDialog.
+    void requestLaunch(const NvApp& app, const QString& remoteRunPath = QString());
 
     ComputerManager* m_ComputerManager;
     NvComputer* m_Computer;
@@ -53,4 +63,10 @@ private:
 
     bool m_ShowErrorDialog;
     QString m_ErrorText;
+
+    bool m_ShowQuitConfirm;
+    bool m_QuitInProgress;
+    QString m_RunningAppName;
+    NvApp m_PendingLaunchApp;
+    QString m_PendingRemoteRunPath;
 };

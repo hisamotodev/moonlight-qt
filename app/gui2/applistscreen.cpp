@@ -16,12 +16,16 @@ AppListScreen::AppListScreen(ComputerManager* computerManager, NvComputer* compu
       m_ComputerManager(computerManager),
       m_Computer(computer),
       m_ShowRemoteRunPopup(false),
-      m_ShowErrorDialog(false)
+      m_ShowErrorDialog(false),
+      m_ShowQuitConfirm(false),
+      m_QuitInProgress(false)
 {
     m_RemoteRunPathBuf[0] = '\0';
 
     connect(m_ComputerManager, &ComputerManager::computerStateChanged,
             this, &AppListScreen::handleComputerStateChanged);
+    connect(m_ComputerManager, &ComputerManager::quitAppCompleted,
+            this, &AppListScreen::handleQuitAppCompleted);
 }
 
 AppListScreen::~AppListScreen()
@@ -48,6 +52,44 @@ void AppListScreen::render()
     renderAppList();
     renderRemoteRunPopup();
     renderErrorDialog();
+    renderQuitConfirmDialog();
+}
+
+void AppListScreen::requestLaunch(const NvApp& app, const QString& remoteRunPath)
+{
+    int runningId;
+    {
+        QReadLocker lock(&m_Computer->lock);
+        runningId = m_Computer->currentGameId;
+    }
+
+    if (runningId != 0 && runningId != app.id) {
+        // Mirrors AppView.qml's launchOrResumeSelectedApp(): a different
+        // app is already running, so confirm quitting it first rather
+        // than letting the host reject (or otherwise misbehave on) a
+        // /launch while another app is active.
+        m_RunningAppName.clear();
+        {
+            QReadLocker lock(&m_Computer->lock);
+            for (const NvApp& existing : std::as_const(m_Computer->appList)) {
+                if (existing.id == runningId) {
+                    m_RunningAppName = existing.name;
+                    break;
+                }
+            }
+        }
+
+        m_PendingLaunchApp = app;
+        m_PendingRemoteRunPath = remoteRunPath;
+        m_ShowQuitConfirm = true;
+        ImGui::OpenPopup("Quit Running App");
+        return;
+    }
+
+    // Session's constructor takes NvApp& (non-const), so route through a
+    // member lvalue rather than the const-ref parameter.
+    m_PendingLaunchApp = app;
+    emit launchRequested(new Session(m_Computer, m_PendingLaunchApp, nullptr, remoteRunPath), app.name);
 }
 
 void AppListScreen::renderAppList()
@@ -100,7 +142,7 @@ void AppListScreen::renderAppList()
         const QByteArray labelUtf8 = label.toUtf8();
         ImGui::PushID(app.id);
         if (ImGui::Selectable(labelUtf8.constData())) {
-            emit launchRequested(new Session(m_Computer, app), app.name);
+            requestLaunch(app);
         }
         ImGui::PopID();
     }
@@ -144,19 +186,21 @@ void AppListScreen::renderRemoteRunPopup()
                     }
 
                     if (!appName.isEmpty()) {
-                        NvApp* found = nullptr;
+                        bool found = false;
+                        NvApp foundApp;
                         {
                             QReadLocker lock(&m_Computer->lock);
-                            for (NvApp& app : m_Computer->appList) {
+                            for (const NvApp& app : std::as_const(m_Computer->appList)) {
                                 if (app.name == appName) {
-                                    found = &app;
+                                    found = true;
+                                    foundApp = app;
                                     break;
                                 }
                             }
                         }
 
                         if (found) {
-                            emit launchRequested(new Session(m_Computer, *found, nullptr, path), appName);
+                            requestLaunch(foundApp, path);
                         } else {
                             m_ErrorText = QStringLiteral(
                                 "Resolved \"%1\" to app \"%2\", but it isn't in this PC's app "
@@ -194,4 +238,50 @@ void AppListScreen::renderErrorDialog()
         }
         ImGui::EndPopup();
     }
+}
+
+void AppListScreen::renderQuitConfirmDialog()
+{
+    if (ImGui::BeginPopupModal("Quit Running App", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (!m_ShowQuitConfirm) {
+            ImGui::CloseCurrentPopup();
+        } else if (m_QuitInProgress) {
+            ImGui::Text("Quitting %s...", m_RunningAppName.toUtf8().constData());
+        } else {
+            const QByteArray text = QStringLiteral("%1 is currently running. Quit it and launch %2?")
+                    .arg(m_RunningAppName, m_PendingLaunchApp.name).toUtf8();
+            ImGui::TextWrapped("%s", text.constData());
+
+            if (ImGui::Button("Quit and Launch")) {
+                m_QuitInProgress = true;
+                m_ComputerManager->quitRunningApp(m_Computer);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) {
+                m_ShowQuitConfirm = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
+void AppListScreen::handleQuitAppCompleted(QVariant error)
+{
+    if (!m_QuitInProgress) {
+        return;
+    }
+
+    m_QuitInProgress = false;
+    m_ShowQuitConfirm = false;
+
+    if (!error.toString().isEmpty()) {
+        m_ErrorText = QStringLiteral("Quitting %1 failed: %2").arg(m_RunningAppName, error.toString());
+        m_ShowErrorDialog = true;
+        ImGui::OpenPopup("Error");
+        return;
+    }
+
+    emit launchRequested(new Session(m_Computer, m_PendingLaunchApp, nullptr, m_PendingRemoteRunPath),
+                          m_PendingLaunchApp.name);
 }
