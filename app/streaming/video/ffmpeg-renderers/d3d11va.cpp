@@ -1192,6 +1192,12 @@ bool D3D11VARenderer::createOverlayVertexBuffer(Overlay::OverlayType type, int w
         renderRect.x = 0;
         renderRect.y = m_DisplayHeight - height;
     }
+    else if (type == Overlay::OverlayMenu) {
+        // Covers the whole viewport -- StreamOverlay renders its surface
+        // at the window's full size.
+        renderRect.x = 0;
+        renderRect.y = 0;
+    }
 
     renderRect.w = width;
     renderRect.h = height;

@@ -14,6 +14,7 @@
 
 class NvHTTP;
 class QThread;
+class StreamOverlay;
 
 class SupportedVideoFormatList : public QList<int>
 {
@@ -124,6 +125,14 @@ public:
     Overlay::OverlayManager& getOverlayManager()
     {
         return m_OverlayManager;
+    }
+
+    // Non-null only while actually streaming (Session::exec()'s loop owns
+    // its lifetime, session.cpp) -- see keyboard.cpp's
+    // KeyComboToggleOverlayButton handler for why this needs to be public.
+    StreamOverlay* getStreamOverlay()
+    {
+        return m_StreamOverlay;
     }
 
     void flushWindowEvents();
@@ -305,6 +314,7 @@ private:
     QQuickWindow* m_QtWindow;
     bool m_UnexpectedTermination;
     SdlInputHandler* m_InputHandler;
+    StreamOverlay* m_StreamOverlay = nullptr;
     int m_MouseEmulationRefCount;
     int m_FlushingWindowEventsRef;
     QStringList m_LaunchWarnings;

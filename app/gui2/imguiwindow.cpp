@@ -17,6 +17,7 @@ ImGuiWindow::ImGuiWindow(QObject* parent)
     : QObject(parent),
       m_Window(nullptr),
       m_Renderer(nullptr),
+      m_Context(nullptr),
       m_WindowId(0),
       m_Initialized(false),
       m_ComputerManager(nullptr),
@@ -68,7 +69,7 @@ bool ImGuiWindow::initialize()
     m_WindowId = SDL_GetWindowID(m_Window);
 
     IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
+    m_Context = ImGui::CreateContext();
     ImGui::StyleColorsDark();
 
     ImGui_ImplSDL2_InitForSDLRenderer(m_Window, m_Renderer);
@@ -130,6 +131,12 @@ void ImGuiWindow::tick()
     if (!m_Initialized) {
         return;
     }
+
+    // Defensive: a just-finished stream's StreamOverlay uses its own
+    // separate ImGui context (see streamoverlay.h) but the global "current
+    // context" pointer is shared process-wide, so make sure it's pointed
+    // back at ours before we touch ImGui again.
+    ImGui::SetCurrentContext(m_Context);
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -323,9 +330,11 @@ void ImGuiWindow::shutdown()
 
     m_Timer.stop();
 
+    ImGui::SetCurrentContext(m_Context);
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
+    ImGui::DestroyContext(m_Context);
+    m_Context = nullptr;
 
     SDL_DestroyRenderer(m_Renderer);
     SDL_DestroyWindow(m_Window);

@@ -146,6 +146,17 @@ public:
 
     void setCaptureActive(bool active);
 
+    // Runtime immersive-mode overrides for the in-stream overlay menu.
+    // Same flag flips + side effects as KeyComboToggleMouseMode/
+    // KeyComboToggleKeyboardGrab in performSpecialKeyCombo() (keyboard.cpp),
+    // just exposed publicly so StreamOverlay can drive them from a menu
+    // selection instead of a hotkey.
+    bool isAbsoluteMouseMode() const { return m_AbsoluteMouseMode; }
+    void setAbsoluteMouseMode(bool absolute);
+
+    StreamingPreferences::CaptureSysKeysMode captureSystemKeysMode() const { return m_CaptureSystemKeysMode; }
+    void setCaptureSystemKeysMode(StreamingPreferences::CaptureSysKeysMode mode);
+
     bool isMouseInVideoRegion(int mouseX, int mouseY, int windowWidth = -1, int windowHeight = -1);
 
     void updateKeyboardGrabState();
@@ -168,6 +179,7 @@ private:
         KeyComboTogglePointerRegionLock,
         KeyComboQuitAndExit,
         KeyComboToggleKeyboardGrab,
+        KeyComboToggleOverlayButton,
         KeyComboMax
     };
 

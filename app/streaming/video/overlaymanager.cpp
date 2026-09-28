@@ -106,6 +106,23 @@ void OverlayManager::setOverlayState(OverlayType type, bool enabled)
     }
 }
 
+void OverlayManager::updateOverlaySurface(OverlayType type, SDL_Surface* surface)
+{
+    // isOverlayEnabled() gates whether any renderer backend draws this
+    // overlay's texture at all, so keep it in sync with surface presence.
+    m_Overlays[type].enabled = (surface != nullptr);
+
+    SDL_Surface* oldSurface = (SDL_Surface*)SDL_AtomicSetPtr((void**)&m_Overlays[type].surface, surface);
+
+    if (m_Renderer != nullptr) {
+        m_Renderer->notifyOverlayUpdated(type);
+    }
+
+    if (oldSurface != nullptr) {
+        SDL_FreeSurface(oldSurface);
+    }
+}
+
 SDL_Color OverlayManager::getOverlayColor(OverlayType type)
 {
     return m_Overlays[type].color;

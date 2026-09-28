@@ -157,6 +157,9 @@ public:
     Q_PROPERTY(bool keepAwake MEMBER keepAwake NOTIFY keepAwakeChanged)
     Q_PROPERTY(CaptureSysKeysMode captureSysKeysMode MEMBER captureSysKeysMode NOTIFY captureSysKeysModeChanged)
     Q_PROPERTY(Language language MEMBER language NOTIFY languageChanged);
+    Q_PROPERTY(double overlayButtonX MEMBER overlayButtonX NOTIFY overlayButtonPositionChanged)
+    Q_PROPERTY(double overlayButtonY MEMBER overlayButtonY NOTIFY overlayButtonPositionChanged)
+    Q_PROPERTY(bool overlayButtonHidden MEMBER overlayButtonHidden NOTIFY overlayButtonHiddenChanged)
 
     Q_INVOKABLE bool retranslate();
 
@@ -201,6 +204,12 @@ public:
     CaptureSysKeysMode captureSysKeysMode;
     RendererSelection rendererSelection;
 
+    // In-stream overlay button position (normalized 0-1, top-left origin)
+    // and hidden state -- see the Parsec-style overlay menu (Overlay::OverlayMenu).
+    double overlayButtonX;
+    double overlayButtonY;
+    bool overlayButtonHidden;
+
 signals:
     void displayModeChanged();
     void bitrateChanged();
@@ -238,6 +247,8 @@ signals:
     void keepAwakeChanged();
     void languageChanged();
     void rendererSelectionChanged();
+    void overlayButtonPositionChanged();
+    void overlayButtonHiddenChanged();
 
 private:
     explicit StreamingPreferences(QQmlEngine *qmlEngine);

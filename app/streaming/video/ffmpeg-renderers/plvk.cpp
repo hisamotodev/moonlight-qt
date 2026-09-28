@@ -1038,6 +1038,12 @@ void PlVkRenderer::renderFrame(AVFrame *frame)
                 overlayParts[i].dst.x0 = 0;
                 overlayParts[i].dst.y0 = 0;
             }
+            else if (i == Overlay::OverlayMenu) {
+                // Covers the whole viewport -- StreamOverlay renders its
+                // surface at the window's full size.
+                overlayParts[i].dst.x0 = 0;
+                overlayParts[i].dst.y0 = 0;
+            }
             overlayParts[i].dst.x1 = overlayParts[i].dst.x0 + overlayParts[i].src.x1;
             overlayParts[i].dst.y1 = overlayParts[i].dst.y0 + overlayParts[i].src.y1;
 

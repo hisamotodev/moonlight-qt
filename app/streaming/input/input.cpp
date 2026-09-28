@@ -100,6 +100,14 @@ SdlInputHandler::SdlInputHandler(StreamingPreferences& prefs, int streamWidth, i
     m_SpecialKeyCombos[KeyComboToggleStatsOverlay].scanCode = SDL_SCANCODE_S;
     m_SpecialKeyCombos[KeyComboToggleStatsOverlay].enabled = true;
 
+    // Re-show the in-stream overlay button after hiding it from its own
+    // menu (StreamOverlay) -- same combo shape as KeyComboToggleStatsOverlay,
+    // just a different letter.
+    m_SpecialKeyCombos[KeyComboToggleOverlayButton].keyCombo = KeyComboToggleOverlayButton;
+    m_SpecialKeyCombos[KeyComboToggleOverlayButton].keyCode = SDLK_o;
+    m_SpecialKeyCombos[KeyComboToggleOverlayButton].scanCode = SDL_SCANCODE_O;
+    m_SpecialKeyCombos[KeyComboToggleOverlayButton].enabled = true;
+
     m_SpecialKeyCombos[KeyComboToggleMouseMode].keyCombo = KeyComboToggleMouseMode;
     m_SpecialKeyCombos[KeyComboToggleMouseMode].keyCode = SDLK_m;
     m_SpecialKeyCombos[KeyComboToggleMouseMode].scanCode = SDL_SCANCODE_M;
@@ -441,6 +449,27 @@ void SdlInputHandler::setCaptureActive(bool active)
 
     // Now update the keyboard grab
     updateKeyboardGrabState();
+}
+
+void SdlInputHandler::setAbsoluteMouseMode(bool absolute)
+{
+    // Same sequence as KeyComboToggleMouseMode in performSpecialKeyCombo()
+    // (keyboard.cpp): drop capture, flip the mode, then recapture so SDL
+    // re-evaluates relative vs. fake (cursor-hide) capture correctly.
+    if (m_AbsoluteMouseMode != absolute) {
+        setCaptureActive(false);
+        m_AbsoluteMouseMode = absolute;
+        setCaptureActive(true);
+    }
+}
+
+void SdlInputHandler::setCaptureSystemKeysMode(StreamingPreferences::CaptureSysKeysMode mode)
+{
+    // Same as KeyComboToggleKeyboardGrab in performSpecialKeyCombo().
+    if (m_CaptureSystemKeysMode != mode) {
+        m_CaptureSystemKeysMode = mode;
+        updateKeyboardGrabState();
+    }
 }
 
 void SdlInputHandler::handleTouchFingerEvent(SDL_TouchFingerEvent* event)

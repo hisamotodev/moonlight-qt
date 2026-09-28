@@ -52,6 +52,9 @@
 #define SER_KEEPAWAKE "keepawake"
 #define SER_LANGUAGE "language"
 #define SER_RENDERER "renderer"
+#define SER_OVERLAYBUTTONX "overlaybuttonx"
+#define SER_OVERLAYBUTTONY "overlaybuttony"
+#define SER_OVERLAYBUTTONHIDDEN "overlaybuttonhidden"
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -171,6 +174,9 @@ void StreamingPreferences::reload()
                                                                                                                  : UIDisplayMode::UI_MAXIMIZED)).toInt());
     language = static_cast<Language>(settings.value(SER_LANGUAGE,
                                                     static_cast<int>(Language::LANG_AUTO)).toInt());
+    overlayButtonX = settings.value(SER_OVERLAYBUTTONX, 0.95).toDouble();
+    overlayButtonY = settings.value(SER_OVERLAYBUTTONY, 0.08).toDouble();
+    overlayButtonHidden = settings.value(SER_OVERLAYBUTTONHIDDEN, false).toBool();
 
 
     // Perform default settings updates as required based on last default version
@@ -362,6 +368,9 @@ void StreamingPreferences::save()
     settings.setValue(SER_SWAPFACEBUTTONS, swapFaceButtons);
     settings.setValue(SER_CAPTURESYSKEYS, captureSysKeysMode);
     settings.setValue(SER_KEEPAWAKE, keepAwake);
+    settings.setValue(SER_OVERLAYBUTTONX, overlayButtonX);
+    settings.setValue(SER_OVERLAYBUTTONY, overlayButtonY);
+    settings.setValue(SER_OVERLAYBUTTONHIDDEN, overlayButtonHidden);
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)

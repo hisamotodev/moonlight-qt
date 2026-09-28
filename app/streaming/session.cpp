@@ -2,6 +2,7 @@
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
+#include "gui2/streamoverlay.h"
 
 #include <Limelight.h>
 #include "SDL_compat.h"
@@ -2166,6 +2167,12 @@ void Session::exec()
 
     m_InputHandler->setWindow(m_Window);
 
+    // Part 2 of the Hunter frontend plan: the in-stream overlay button/menu.
+    // See streamoverlay.h for why it owns a separate ImGui context and
+    // renders into its own offscreen surface rather than reusing
+    // ImGuiWindow's.
+    m_StreamOverlay = new StreamOverlay(m_Window, &m_OverlayManager, m_Preferences, m_InputHandler);
+
     QSvgRenderer svgIconRenderer(QString(":/res/moonlight.svg"));
     QImage svgImage(ICON_SIZE, ICON_SIZE, QImage::Format_RGBA8888);
     svgImage.fill(0);
@@ -2599,18 +2606,34 @@ void Session::exec()
 
         case SDL_KEYUP:
         case SDL_KEYDOWN:
+            // The overlay menu (StreamOverlay) gets first look at
+            // keyboard/mouse events and reports whether it consumed them
+            // (menu open and the event landed on one of its widgets) --
+            // if so, the game does not also see them.
+            if (m_StreamOverlay != nullptr && m_StreamOverlay->processEvent(event)) {
+                break;
+            }
             presence.runCallbacks();
             m_InputHandler->handleKeyEvent(&event.key);
             break;
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP:
+            if (m_StreamOverlay != nullptr && m_StreamOverlay->processEvent(event)) {
+                break;
+            }
             presence.runCallbacks();
             m_InputHandler->handleMouseButtonEvent(&event.button);
             break;
         case SDL_MOUSEMOTION:
+            if (m_StreamOverlay != nullptr && m_StreamOverlay->processEvent(event)) {
+                break;
+            }
             m_InputHandler->handleMouseMotionEvent(&event.motion);
             break;
         case SDL_MOUSEWHEEL:
+            if (m_StreamOverlay != nullptr && m_StreamOverlay->processEvent(event)) {
+                break;
+            }
             m_InputHandler->handleMouseWheelEvent(&event.wheel);
             break;
         case SDL_CONTROLLERAXISMOTION:
@@ -2657,9 +2680,20 @@ void Session::exec()
             }
             break;
         }
+
+        // Cheap to call every iteration -- internally throttled to ~30 Hz
+        // and a no-op unless the overlay button/menu is actually visible.
+        if (m_StreamOverlay != nullptr) {
+            m_StreamOverlay->maybeRender();
+        }
     }
 
 DispatchDeferredCleanup:
+    // Tear down the overlay before anything it touches (m_Window,
+    // m_OverlayManager) gets torn down below.
+    delete m_StreamOverlay;
+    m_StreamOverlay = nullptr;
+
     // Stop the remote-run size poll thread before anything it might touch
     // (m_Window) gets torn down below.
     if (m_RemoteRunSizePollThread != nullptr) {

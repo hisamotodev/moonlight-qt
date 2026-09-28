@@ -8,6 +8,7 @@
 struct SDL_Window;
 struct SDL_Renderer;
 union SDL_Event;
+struct ImGuiContext;
 class ComputerManager;
 class SystemProperties;
 class NvComputer;
@@ -68,6 +69,7 @@ private:
 
     SDL_Window* m_Window;
     SDL_Renderer* m_Renderer;
+    ImGuiContext* m_Context;
     uint32_t m_WindowId;
     QTimer m_Timer;
     bool m_Initialized;

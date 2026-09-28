@@ -195,6 +195,7 @@ SOURCES += \
     gui2/settingsscreen.cpp \
     gui2/cliactionwindow.cpp \
     gui2/clidrivers.cpp \
+    gui2/streamoverlay.cpp \
     wm.cpp
 
 HEADERS += \
@@ -235,7 +236,8 @@ HEADERS += \
     gui2/applistscreen.h \
     gui2/settingsscreen.h \
     gui2/cliactionwindow.h \
-    gui2/clidrivers.h
+    gui2/clidrivers.h \
+    gui2/streamoverlay.h
 
 # Platform-specific renderers and decoders
 ffmpeg {

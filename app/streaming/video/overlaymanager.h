@@ -10,6 +10,12 @@ namespace Overlay {
 enum OverlayType {
     OverlayDebug,
     OverlayStatusUpdate,
+    // The interactive Parsec-style overlay button/menu (StreamOverlay,
+    // app/gui2/streamoverlay.*). Unlike the other two overlays, its
+    // surface is produced by rendering Dear ImGui into an offscreen
+    // SDL_Surface via SDL2's software renderer, not SDL_ttf text -- but it
+    // reuses this exact same surface-swap/composite mechanism.
+    OverlayMenu,
     OverlayMax
 };
 
@@ -32,6 +38,13 @@ public:
     void updateOverlayText(OverlayType type, const char* text);
     int getOverlayMaxTextLength();
     void setOverlayTextUpdated(OverlayType type);
+
+    // For overlays whose surface isn't SDL_ttf-rendered text (currently
+    // just OverlayMenu, rendered by StreamOverlay via Dear ImGui). Takes
+    // ownership of surface (or nullptr to clear); same atomic swap +
+    // renderer notification as the text path's notifyOverlayUpdated(),
+    // just skipping RenderTextOutlinedWrapped().
+    void updateOverlaySurface(OverlayType type, SDL_Surface* surface);
     void setOverlayState(OverlayType type, bool enabled);
     SDL_Color getOverlayColor(OverlayType type);
     int getOverlayFontSize(OverlayType type);

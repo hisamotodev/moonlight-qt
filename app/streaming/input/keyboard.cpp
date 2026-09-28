@@ -1,4 +1,5 @@
 #include "streaming/session.h"
+#include "gui2/streamoverlay.h"
 
 #include <Limelight.h>
 #include "SDL_compat.h"
@@ -56,6 +57,17 @@ void SdlInputHandler::performSpecialKeyCombo(KeyCombo combo)
         // Toggle the stats overlay
         Session::get()->getOverlayManager().setOverlayState(Overlay::OverlayDebug,
                                                             !Session::get()->getOverlayManager().isOverlayEnabled(Overlay::OverlayDebug));
+        break;
+
+    case KeyComboToggleOverlayButton:
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Detected overlay button toggle combo");
+
+        // Re-show (or hide) the in-stream overlay button -- the only other
+        // way to show it again after hiding it from its own menu.
+        if (Session::get()->getStreamOverlay() != nullptr) {
+            Session::get()->getStreamOverlay()->toggleButtonHidden();
+        }
         break;
 
     case KeyComboToggleMouseMode:

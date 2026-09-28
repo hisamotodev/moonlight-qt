@@ -668,6 +668,12 @@ void DXVA2Renderer::notifyOverlayUpdated(Overlay::OverlayType type)
         renderRect.x = 0;
         renderRect.y = 0;
     }
+    else if (type == Overlay::OverlayMenu) {
+        // Covers the whole viewport -- StreamOverlay renders its surface
+        // at the window's full size.
+        renderRect.x = 0;
+        renderRect.y = 0;
+    }
 
     renderRect.w = newSurface->w;
     renderRect.h = newSurface->h;
