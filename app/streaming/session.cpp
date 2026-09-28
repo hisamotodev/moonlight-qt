@@ -1809,28 +1809,57 @@ bool Session::waitForCaptureWindowReady(NvHTTP& http, int appId)
 // motivated this.
 void Session::checkDecodeStall()
 {
-    if (m_VideoDecoder == nullptr) {
+    // Live-testing finding: the stream can wedge *before* a decoder is
+    // ever created at all (drSetup() only records the negotiated format --
+    // see its comment for why real decoder creation is deferred to the
+    // first relevant window event), not just after. Use plain elapsed time
+    // as the signal in that case, since there's no decoder yet to query;
+    // once one exists, getVideoStats() below takes over. Both branches
+    // share m_LastDecodeProgressTicks/m_DecodeStallRecoveryAttempts, and
+    // every decoder creation (including the one this function itself may
+    // trigger) resets m_LastDecodeProgressTicks to 0, so the transition
+    // between "no decoder yet" and "decoder exists" always gets a fresh
+    // baseline rather than inheriting stale elapsed time.
+    uint32_t currentDecodedFrames = 0;
+    bool haveStats = false;
+
+    if (SDL_TryLockMutex(m_DecoderLock) == 0) {
+        if (m_VideoDecoder != nullptr) {
+            VIDEO_STATS stats;
+            if (m_VideoDecoder->getVideoStats(&stats)) {
+                currentDecodedFrames = stats.decodedFrames;
+                haveStats = true;
+            }
+        }
+        SDL_UnlockMutex(m_DecoderLock);
+    }
+    else {
+        // Decoder is being torn down/recreated right now elsewhere --
+        // nothing useful to check this cycle.
         return;
     }
 
-    VIDEO_STATS stats;
-    if (!m_VideoDecoder->getVideoStats(&stats)) {
-        // This decoder doesn't support stall detection.
+    if (m_VideoDecoder != nullptr && !haveStats) {
+        // A decoder exists but doesn't support stall detection (not
+        // FFmpegVideoDecoder) -- nothing more we can do.
         return;
     }
 
     uint32_t now = SDL_GetTicks();
 
     if (m_LastDecodeProgressTicks == 0) {
-        // First check against this decoder instance -- establish a
-        // baseline, nothing to compare yet.
-        m_LastDecodedFrameCount = stats.decodedFrames;
+        // First check since (re)connecting or the last decoder creation --
+        // establish a baseline, nothing to compare yet.
+        m_LastDecodedFrameCount = currentDecodedFrames;
         m_LastDecodeProgressTicks = now;
         return;
     }
 
-    if (stats.decodedFrames != m_LastDecodedFrameCount) {
-        m_LastDecodedFrameCount = stats.decodedFrames;
+    // While there's no decoder yet, currentDecodedFrames is always 0, so
+    // this only reports "progress" once a decoder shows up and actually
+    // decodes something -- exactly the two things we're waiting on.
+    if (currentDecodedFrames != m_LastDecodedFrameCount) {
+        m_LastDecodedFrameCount = currentDecodedFrames;
         m_LastDecodeProgressTicks = now;
         m_DecodeStallRecoveryAttempts = 0;  // real progress resets the retry budget
         return;
@@ -1849,17 +1878,19 @@ void Session::checkDecodeStall()
 
     m_DecodeStallRecoveryAttempts++;
     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
-                "No decoded frames for %ums; forcing decoder recreation (attempt %d/%d)",
+                "%s for %ums; forcing decoder (re)creation (attempt %d/%d)",
+                m_VideoDecoder == nullptr ? "No video decoder created" : "No decoded frames",
                 DECODE_STALL_TIMEOUT_MS, m_DecodeStallRecoveryAttempts, MAX_DECODE_STALL_RECOVERY_ATTEMPTS);
 
-    // Give the recreated decoder its own fresh grace period rather than
-    // immediately re-triggering on the next check.
+    // Give whatever decoder results from this its own fresh grace period
+    // rather than immediately re-triggering on the next check.
     m_LastDecodeProgressTicks = now;
 
     // Same event type already used for real GPU device-loss recovery
     // (SDL_RENDER_DEVICE_RESET case below) -- reuses that existing
-    // decoder-destroy-and-recreate + LiRequestIdrFrame() path rather than
-    // duplicating it.
+    // decoder-destroy-and-recreate + LiRequestIdrFrame() path (which
+    // handles m_VideoDecoder already being null fine, same as it would be
+    // on the very first decoder creation) rather than duplicating it.
     SDL_Event resetEvent = {};
     resetEvent.type = SDL_RENDER_DEVICE_RESET;
     SDL_PushEvent(&resetEvent);
