@@ -1799,7 +1799,14 @@ bool Session::waitForCaptureWindowReady(NvHTTP& http, int appId)
     return false;
 }
 
-#define DECODE_STALL_TIMEOUT_MS 6000
+// Not 0: moonlight-common-c's own IDR retry loop (see VideoDepacketizer.c)
+// already re-requests roughly once a second, and a healthy connection's
+// very first frame can legitimately take a few hundred ms to a second or
+// so (RTSP handshake + first IDR round trip). This just needs to be short
+// enough that the user doesn't perceive it as "stuck," not the shortest
+// value that compiles -- too low would fire mid-legitimate-startup and
+// force needless recreations.
+#define DECODE_STALL_TIMEOUT_MS 1500
 #define MAX_DECODE_STALL_RECOVERY_ATTEMPTS 3
 
 // Called once per main-loop iteration (session.cpp's exec() loop, both the
