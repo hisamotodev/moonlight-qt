@@ -85,6 +85,19 @@ bool FFmpegVideoDecoder::notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info)
     return m_FrontendRenderer->notifyWindowChanged(info);
 }
 
+bool FFmpegVideoDecoder::getVideoStats(PVIDEO_STATS stats)
+{
+    // m_ActiveWndVideoStats is written from the decoder thread (see
+    // submitDecodeUnit()) and read here from the main thread with no lock,
+    // same as the existing cross-thread access to the OverlayDebug text
+    // this same struct feeds (stringifyVideoStats(), below) -- a plain
+    // uint32_t counter read racing with an increment is a non-issue for a
+    // stall-detection heuristic (session.cpp's decode-stall watchdog),
+    // which only cares whether the value moves at all over several seconds.
+    *stats = m_ActiveWndVideoStats;
+    return true;
+}
+
 int FFmpegVideoDecoder::getDecoderCapabilities()
 {
     int capabilities;

@@ -1799,6 +1799,72 @@ bool Session::waitForCaptureWindowReady(NvHTTP& http, int appId)
     return false;
 }
 
+#define DECODE_STALL_TIMEOUT_MS 6000
+#define MAX_DECODE_STALL_RECOVERY_ATTEMPTS 3
+
+// Called once per main-loop iteration (session.cpp's exec() loop, both the
+// idle/timeout branches and after real events are processed -- see the call
+// sites -- so a stall is still caught even if it coincides with other
+// non-video SDL activity). See the .h comment for the finding that
+// motivated this.
+void Session::checkDecodeStall()
+{
+    if (m_VideoDecoder == nullptr) {
+        return;
+    }
+
+    VIDEO_STATS stats;
+    if (!m_VideoDecoder->getVideoStats(&stats)) {
+        // This decoder doesn't support stall detection.
+        return;
+    }
+
+    uint32_t now = SDL_GetTicks();
+
+    if (m_LastDecodeProgressTicks == 0) {
+        // First check against this decoder instance -- establish a
+        // baseline, nothing to compare yet.
+        m_LastDecodedFrameCount = stats.decodedFrames;
+        m_LastDecodeProgressTicks = now;
+        return;
+    }
+
+    if (stats.decodedFrames != m_LastDecodedFrameCount) {
+        m_LastDecodedFrameCount = stats.decodedFrames;
+        m_LastDecodeProgressTicks = now;
+        m_DecodeStallRecoveryAttempts = 0;  // real progress resets the retry budget
+        return;
+    }
+
+    if (now - m_LastDecodeProgressTicks < DECODE_STALL_TIMEOUT_MS) {
+        return;
+    }
+
+    if (m_DecodeStallRecoveryAttempts >= MAX_DECODE_STALL_RECOVERY_ATTEMPTS) {
+        // Already tried recovering enough times without real progress --
+        // whatever's wrong likely isn't something a decoder recreation can
+        // fix. Stop retrying rather than recreating forever.
+        return;
+    }
+
+    m_DecodeStallRecoveryAttempts++;
+    SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                "No decoded frames for %ums; forcing decoder recreation (attempt %d/%d)",
+                DECODE_STALL_TIMEOUT_MS, m_DecodeStallRecoveryAttempts, MAX_DECODE_STALL_RECOVERY_ATTEMPTS);
+
+    // Give the recreated decoder its own fresh grace period rather than
+    // immediately re-triggering on the next check.
+    m_LastDecodeProgressTicks = now;
+
+    // Same event type already used for real GPU device-loss recovery
+    // (SDL_RENDER_DEVICE_RESET case below) -- reuses that existing
+    // decoder-destroy-and-recreate + LiRequestIdrFrame() path rather than
+    // duplicating it.
+    SDL_Event resetEvent = {};
+    resetEvent.type = SDL_RENDER_DEVICE_RESET;
+    SDL_PushEvent(&resetEvent);
+}
+
 // Called in a non-main thread
 bool Session::startConnectionAsync()
 {
@@ -2287,6 +2353,7 @@ void Session::exec()
         // and other problems.
         if (!SDL_WaitEventTimeout(&event, 1000)) {
             presence.runCallbacks();
+            checkDecodeStall();
             continue;
         }
 #else
@@ -2303,6 +2370,7 @@ void Session::exec()
             SDL_Delay(10);
 #endif
             presence.runCallbacks();
+            checkDecodeStall();
             continue;
         }
 #endif
@@ -2590,6 +2658,15 @@ void Session::exec()
                     goto DispatchDeferredCleanup;
                 }
 
+                // Give the new decoder instance (this path handles both the
+                // very first decoder setup and every later recreation) a
+                // fresh baseline for checkDecodeStall() -- otherwise its
+                // reset-to-0 frame counter looks like "changed" relative to
+                // the old decoder's stale count, which would incorrectly
+                // reset m_DecodeStallRecoveryAttempts on every single check
+                // and defeat the retry budget entirely.
+                m_LastDecodeProgressTicks = 0;
+
                 // As of SDL 2.0.12, SDL_RecreateWindow() doesn't carry over mouse capture
                 // or mouse hiding state to the new window. By capturing after the decoder
                 // is set up, this ensures the window re-creation is already done.
@@ -2694,6 +2771,8 @@ void Session::exec()
         if (m_StreamOverlay != nullptr) {
             m_StreamOverlay->maybeRender();
         }
+
+        checkDecodeStall();
     }
 
 DispatchDeferredCleanup:

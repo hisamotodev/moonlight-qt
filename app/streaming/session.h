@@ -180,6 +180,20 @@ private:
 
     bool startConnectionAsync();
 
+    // Live-testing finding: WGC capture-window sessions can occasionally
+    // come up wedged, never delivering a decodable frame (moonlight-common-c
+    // logs "Video decode unit queue overflow" / "Waiting for IDR frame" in
+    // an endless loop) -- observed to recover if the user manually resizes
+    // the Hunter window, which happens to force a decoder recreation. This
+    // watches FFmpegVideoDecoder's live decode-frame counter (via
+    // IVideoDecoder::getVideoStats()) and, if it hasn't moved for
+    // DECODE_STALL_TIMEOUT_MS, does that same recreation automatically by
+    // pushing a synthetic SDL_RENDER_DEVICE_RESET (the same event type
+    // already used for real GPU device-loss recovery, session.cpp's main
+    // loop). Called once per main-loop iteration, alongside
+    // m_StreamOverlay->maybeRender() -- see the .cpp for the retry budget.
+    void checkDecodeStall();
+
     // agent.md sections 8.3/11.4: for any capture_window app (window-class
     // configured in apps.json on the Titan side -- not just remote-run
     // launches, see this session's fix), polls Titan's launch-readiness
@@ -316,6 +330,13 @@ private:
     QSemaphore m_ReconnectDecoderTornDownSem {0};
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
+
+    // checkDecodeStall()'s state. Reset whenever the decoder is (re)created
+    // (session.cpp's SDL_RENDER_DEVICE_RESET case) so each decoder instance
+    // gets its own fresh grace period.
+    uint32_t m_LastDecodedFrameCount = 0;
+    uint32_t m_LastDecodeProgressTicks = 0;
+    int m_DecodeStallRecoveryAttempts = 0;
     bool m_AudioDisabled;
     bool m_AudioMuted;
     Uint32 m_FullScreenFlag;

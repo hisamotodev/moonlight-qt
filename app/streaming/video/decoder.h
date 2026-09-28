@@ -77,4 +77,12 @@ public:
     virtual void renderFrameOnMainThread() = 0;
     virtual void setHdrMode(bool enabled) = 0;
     virtual bool notifyWindowChanged(PWINDOW_STATE_CHANGE_INFO info) = 0;
+
+    // Returns true and fills *stats with this decoder's live decode
+    // counters if it supports exposing them (currently FFmpegVideoDecoder
+    // only). Used by Session's decode-stall watchdog (session.cpp) to
+    // detect a wedged decoder/capture and force recovery. Default no-op so
+    // other IVideoDecoder implementations don't need to add an empty
+    // override just to opt out.
+    virtual bool getVideoStats(PVIDEO_STATS /*stats*/) { return false; }
 };
