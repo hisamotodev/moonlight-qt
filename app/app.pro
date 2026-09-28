@@ -1,4 +1,4 @@
-QT += core quick network quickcontrols2 svg
+QT += core quick network svg
 CONFIG += c++17
 
 unix:!macx {
@@ -9,18 +9,6 @@ unix:!macx {
 }
 
 include(../globaldefs.pri)
-
-# Precompile QML files to avoid writing qmlcache on portable versions.
-# Since this binds the app against the Qt runtime version, we will only
-# do this for Windows and Mac (when disable-prebuilts is not defined),
-# since they always ship with the matching build of the Qt runtime.
-!disable-prebuilts {
-    win32|macx {
-        CONFIG(release, debug|release) {
-            CONFIG += qtquickcompiler
-        }
-    }
-}
 
 TEMPLATE = app
 
@@ -194,20 +182,19 @@ SOURCES += \
     streaming/session.cpp \
     streaming/audio/audio.cpp \
     streaming/audio/renderers/sdlaud.cpp \
-    gui/computermodel.cpp \
-    gui/appmodel.cpp \
     streaming/bandwidth.cpp \
     streaming/streamutils.cpp \
     backend/autoupdatechecker.cpp \
     path.cpp \
     settings/mappingmanager.cpp \
-    gui/sdlgamepadkeynavigation.cpp \
     streaming/video/overlaymanager.cpp \
     backend/systemproperties.cpp \
     gui2/imguiwindow.cpp \
     gui2/pclistscreen.cpp \
     gui2/applistscreen.cpp \
     gui2/settingsscreen.cpp \
+    gui2/cliactionwindow.cpp \
+    gui2/clidrivers.cpp \
     wm.cpp
 
 HEADERS += \
@@ -235,21 +222,20 @@ HEADERS += \
     streaming/session.h \
     streaming/audio/renderers/renderer.h \
     streaming/audio/renderers/sdl.h \
-    gui/computermodel.h \
-    gui/appmodel.h \
     streaming/video/decoder.h \
     streaming/bandwidth.h \
     streaming/streamutils.h \
     backend/autoupdatechecker.h \
     path.h \
     settings/mappingmanager.h \
-    gui/sdlgamepadkeynavigation.h \
     streaming/video/overlaymanager.h \
     backend/systemproperties.h \
     gui2/imguiwindow.h \
     gui2/pclistscreen.h \
     gui2/applistscreen.h \
-    gui2/settingsscreen.h
+    gui2/settingsscreen.h \
+    gui2/cliactionwindow.h \
+    gui2/clidrivers.h
 
 # Platform-specific renderers and decoders
 ffmpeg {
@@ -458,8 +444,7 @@ wayland {
 }
 
 RESOURCES += \
-    resources.qrc \
-    qml.qrc
+    resources.qrc
 
 TRANSLATIONS += \
     languages/qml_zh_CN.ts \

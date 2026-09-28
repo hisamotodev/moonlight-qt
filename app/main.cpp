@@ -1,9 +1,6 @@
 #include <QGuiApplication>
 #include <QStyleHints>
-#include <QQmlApplicationEngine>
-#include <QQmlContext>
 #include <QIcon>
-#include <QQuickStyle>
 #include <QMutex>
 #include <QtDebug>
 #include <QNetworkProxyFactory>
@@ -13,6 +10,8 @@
 #include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <QRegularExpression>
+#include <QDir>
+#include <QThreadPool>
 
 #ifdef Q_OS_UNIX
 #include <sys/socket.h>
@@ -40,21 +39,15 @@
 #endif
 
 #include "cli/listapps.h"
-#include "cli/quitstream.h"
-#include "cli/startstream.h"
-#include "cli/pair.h"
 #include "cli/commandlineparser.h"
 #include "path.h"
 #include "utils.h"
-#include "gui/computermodel.h"
-#include "gui/appmodel.h"
-#include "backend/autoupdatechecker.h"
 #include "backend/computermanager.h"
 #include "backend/systemproperties.h"
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
-#include "gui/sdlgamepadkeynavigation.h"
 #include "gui2/imguiwindow.h"
+#include "gui2/clidrivers.h"
 
 #if defined(Q_OS_WIN32)
 #define IS_UNSPECIFIED_HANDLE(x) ((x) == INVALID_HANDLE_VALUE || (x) == NULL)
@@ -931,116 +924,46 @@ int main(int argc, char *argv[])
     qputenv("SDL_VIDEO_WAYLAND_WMCLASS", "com.moonlight_stream.Moonlight");
     qputenv("SDL_VIDEO_X11_WMCLASS", "com.moonlight_stream.Moonlight");
 
-    // Register our C++ types for QML
-    qmlRegisterType<ComputerModel>("ComputerModel", 1, 0, "ComputerModel");
-    qmlRegisterType<AppModel>("AppModel", 1, 0, "AppModel");
-    qmlRegisterUncreatableType<Session>("Session", 1, 0, "Session", "Session cannot be created from QML");
-    qmlRegisterSingletonType<ComputerManager>("ComputerManager", 1, 0,
-                                              "ComputerManager",
-                                              [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
-                                                  return new ComputerManager(StreamingPreferences::get(qmlEngine));
-                                              });
-    qmlRegisterSingletonType<AutoUpdateChecker>("AutoUpdateChecker", 1, 0,
-                                                "AutoUpdateChecker",
-                                                [](QQmlEngine*, QJSEngine*) -> QObject* {
-                                                    return new AutoUpdateChecker();
-                                                });
-    qmlRegisterSingletonType<SystemProperties>("SystemProperties", 1, 0,
-                                               "SystemProperties",
-                                               [](QQmlEngine*, QJSEngine*) -> QObject* {
-                                                   return new SystemProperties();
-                                               });
-    qmlRegisterSingletonType<SdlGamepadKeyNavigation>("SdlGamepadKeyNavigation", 1, 0,
-                                                      "SdlGamepadKeyNavigation",
-                                                      [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
-                                                          return new SdlGamepadKeyNavigation(StreamingPreferences::get(qmlEngine));
-                                                      });
-    qmlRegisterSingletonType<StreamingPreferences>("StreamingPreferences", 1, 0,
-                                                   "StreamingPreferences",
-                                                   [](QQmlEngine* qmlEngine, QJSEngine*) -> QObject* {
-                                                       return StreamingPreferences::get(qmlEngine);
-                                                   });
-
     // Create the identity manager on the main thread
     IdentityManager::get();
 
-    // We require the Material theme
-    QQuickStyle::setStyle("Material");
-
-    // Our icons are styled for a dark theme, so we do not allow the user to override this
-    qputenv("QT_QUICK_CONTROLS_MATERIAL_THEME", "Dark");
-
-    // These are defaults that we allow the user to override
-    if (!qEnvironmentVariableIsSet("QT_QUICK_CONTROLS_MATERIAL_ACCENT")) {
-        qputenv("QT_QUICK_CONTROLS_MATERIAL_ACCENT", "Purple");
-    }
-    if (!qEnvironmentVariableIsSet("QT_QUICK_CONTROLS_MATERIAL_VARIANT")) {
-        qputenv("QT_QUICK_CONTROLS_MATERIAL_VARIANT", "Dense");
-    }
-    if (!qEnvironmentVariableIsSet("QT_QUICK_CONTROLS_MATERIAL_PRIMARY")) {
-        // Qt 6.9 began to use a different shade of Material.Indigo when we use a dark theme
-        // (which is all the time). The new color looks washed out, so manually specify the
-        // old primary color unless the user overrides it themselves.
-        qputenv("QT_QUICK_CONTROLS_MATERIAL_PRIMARY", "#3F51B5");
-    }
-
-    QQmlApplicationEngine engine;
-    QString initialView;
-    bool hasGUI = true;
-    ImGuiWindow* imguiWindow = nullptr;
-
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::NormalStartRequested:
-        // Phase 0 dev-time switch (see plan: Hunter frontend QML -> ImGui).
-        // Set HUNTER_IMGUI_UI=1 to boot the new Dear ImGui frontend instead
-        // of the existing QML UI. This flag and the QML fallback path both
-        // go away once the ImGui frontend reaches parity (plan Phase 4).
-        if (qEnvironmentVariableIsSet("HUNTER_IMGUI_UI")) {
-            imguiWindow = new ImGuiWindow(&app);
-            if (imguiWindow->initialize()) {
-                QObject::connect(imguiWindow, &ImGuiWindow::closed, &app, &QGuiApplication::quit);
-                hasGUI = false;
-                break;
+        {
+            auto imguiWindow = new ImGuiWindow(&app);
+            if (!imguiWindow->initialize()) {
+                SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "ImGuiWindow::initialize() failed");
+                return -1;
             }
-
-            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                         "HUNTER_IMGUI_UI requested but ImGuiWindow::initialize() failed; "
-                         "falling back to the QML UI");
-            delete imguiWindow;
-            imguiWindow = nullptr;
+            QObject::connect(imguiWindow, &ImGuiWindow::closed, &app, &QGuiApplication::quit);
+            break;
         }
-
-        initialView = "qrc:/gui/PcView.qml";
-        break;
     case GlobalCommandLineParser::StreamRequested:
         {
-            initialView = "qrc:/gui/CliStartStreamSegue.qml";
             StreamingPreferences* preferences = StreamingPreferences::get();
             StreamCommandLineParser streamParser;
             streamParser.parse(app.arguments(), preferences);
             QString host    = streamParser.getHost();
             QString appName = streamParser.getAppName();
             QString remoteRunPath = streamParser.getRemoteRunPath();
-            auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app, remoteRunPath);
-            engine.rootContext()->setContextProperty("launcher", launcher);
+            auto driver = new CliStreamDriver(host, appName, preferences, remoteRunPath, &app);
+            driver->start(new ComputerManager(preferences));
             break;
         }
     case GlobalCommandLineParser::QuitRequested:
         {
-            initialView = "qrc:/gui/CliQuitStreamSegue.qml";
             QuitCommandLineParser quitParser;
             quitParser.parse(app.arguments());
-            auto launcher = new CliQuitStream::Launcher(quitParser.getHost(), &app);
-            engine.rootContext()->setContextProperty("launcher", launcher);
+            auto driver = new CliQuitDriver(quitParser.getHost(), &app);
+            driver->start(new ComputerManager(StreamingPreferences::get()));
             break;
         }
     case GlobalCommandLineParser::PairRequested:
         {
-            initialView = "qrc:/gui/CliPair.qml";
             PairCommandLineParser pairParser;
             pairParser.parse(app.arguments());
-            auto launcher = new CliPair::Launcher(pairParser.getHost(), pairParser.getPredefinedPin(), &app);
-            engine.rootContext()->setContextProperty("launcher", launcher);
+            auto driver = new CliPairDriver(pairParser.getHost(), pairParser.getPredefinedPin(), &app);
+            driver->start(new ComputerManager(StreamingPreferences::get()));
             break;
         }
     case GlobalCommandLineParser::ListRequested:
@@ -1049,19 +972,8 @@ int main(int argc, char *argv[])
             listParser.parse(app.arguments());
             auto launcher = new CliListApps::Launcher(listParser.getHost(), listParser, &app);
             launcher->execute(new ComputerManager(StreamingPreferences::get()));
-            hasGUI = false;
             break;
         }
-    }
-
-    if (hasGUI) {
-        engine.rootContext()->setContextProperty("initialView", initialView);
-        engine.rootContext()->setContextProperty("runConfigChecks", commandLineParserResult == GlobalCommandLineParser::NormalStartRequested);
-
-        // Load the main.qml file
-        engine.load(QUrl(QStringLiteral("qrc:/gui/main.qml")));
-        if (engine.rootObjects().isEmpty())
-            return -1;
     }
 
     int err = app.exec();

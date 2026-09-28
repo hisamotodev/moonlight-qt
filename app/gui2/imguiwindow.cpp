@@ -44,8 +44,8 @@ ImGuiWindow::~ImGuiWindow()
 bool ImGuiWindow::initialize()
 {
     // SDL_INIT_VIDEO is already brought up unconditionally on Windows by
-    // main.cpp before the QQmlApplicationEngine (or, in the future, this
-    // window) is created, so we don't call SDL_InitSubSystem() again here.
+    // main.cpp before this window is created, so we don't call
+    // SDL_InitSubSystem() again here.
     m_Window = SDL_CreateWindow("Moonlight",
                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                  1280, 800,
