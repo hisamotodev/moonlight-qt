@@ -54,6 +54,7 @@
 #include "streaming/session.h"
 #include "settings/streamingpreferences.h"
 #include "gui/sdlgamepadkeynavigation.h"
+#include "gui2/imguiwindow.h"
 
 #if defined(Q_OS_WIN32)
 #define IS_UNSPECIFIED_HANDLE(x) ((x) == INVALID_HANDLE_VALUE || (x) == NULL)
@@ -986,9 +987,29 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     QString initialView;
     bool hasGUI = true;
+    ImGuiWindow* imguiWindow = nullptr;
 
     switch (commandLineParserResult) {
     case GlobalCommandLineParser::NormalStartRequested:
+        // Phase 0 dev-time switch (see plan: Hunter frontend QML -> ImGui).
+        // Set HUNTER_IMGUI_UI=1 to boot the new Dear ImGui frontend instead
+        // of the existing QML UI. This flag and the QML fallback path both
+        // go away once the ImGui frontend reaches parity (plan Phase 4).
+        if (qEnvironmentVariableIsSet("HUNTER_IMGUI_UI")) {
+            imguiWindow = new ImGuiWindow(&app);
+            if (imguiWindow->initialize()) {
+                QObject::connect(imguiWindow, &ImGuiWindow::closed, &app, &QGuiApplication::quit);
+                hasGUI = false;
+                break;
+            }
+
+            SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                         "HUNTER_IMGUI_UI requested but ImGuiWindow::initialize() failed; "
+                         "falling back to the QML UI");
+            delete imguiWindow;
+            imguiWindow = nullptr;
+        }
+
         initialView = "qrc:/gui/PcView.qml";
         break;
     case GlobalCommandLineParser::StreamRequested:

@@ -204,6 +204,7 @@ SOURCES += \
     gui/sdlgamepadkeynavigation.cpp \
     streaming/video/overlaymanager.cpp \
     backend/systemproperties.cpp \
+    gui2/imguiwindow.cpp \
     wm.cpp
 
 HEADERS += \
@@ -241,7 +242,8 @@ HEADERS += \
     settings/mappingmanager.h \
     gui/sdlgamepadkeynavigation.h \
     streaming/video/overlaymanager.h \
-    backend/systemproperties.h
+    backend/systemproperties.h \
+    gui2/imguiwindow.h
 
 # Platform-specific renderers and decoders
 ffmpeg {
@@ -511,6 +513,13 @@ else:unix: LIBS += -L$$OUT_PWD/../h264bitstream/ -lh264bitstream
 
 INCLUDEPATH += $$PWD/../h264bitstream
 DEPENDPATH += $$PWD/../h264bitstream
+
+win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/../imgui/release/ -limgui
+else:win32:CONFIG(debug, debug|release): LIBS += -L$$OUT_PWD/../imgui/debug/ -limgui
+else:unix: LIBS += -L$$OUT_PWD/../imgui/ -limgui
+
+INCLUDEPATH += $$PWD/../imgui/imgui $$PWD/../imgui/imgui/backends $$PWD/../imgui/imgui/misc/cpp
+DEPENDPATH += $$PWD/../imgui/imgui
 
 !winrt {
     win32:CONFIG(release, debug|release): LIBS += -L$$OUT_PWD/../AntiHooking/release/ -lAntiHooking

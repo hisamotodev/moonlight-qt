@@ -7,3 +7,6 @@ build/
 libs/
 config.tests/*/.qmake.stash
 config.tests/*/Makefile
+
+# Dear ImGui window-layout state, written next to the working directory at runtime
+imgui.ini
