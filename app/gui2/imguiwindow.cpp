@@ -47,10 +47,25 @@ bool ImGuiWindow::initialize()
     // SDL_INIT_VIDEO is already brought up unconditionally on Windows by
     // main.cpp before this window is created, so we don't call
     // SDL_InitSubSystem() again here.
+    // Deliberately NOT SDL_WINDOW_ALLOW_HIGHDPI: Qt's QGuiApplication
+    // (main.cpp, constructed before this window) already sets the
+    // process's Windows DPI-awareness mode, which SDL cannot change
+    // afterward. Found in live testing on a second, differently-DPI-scaled
+    // PC: with ALLOW_HIGHDPI set, SDL2's own per-monitor-DPI mouse
+    // coordinate math ends up out of sync with whatever awareness mode
+    // Qt already locked in -- OS-level window operations (drag/resize,
+    // handled by the window manager's own hit-testing) still worked fine,
+    // but every ImGui widget's click hit-test silently failed. Omitting it
+    // makes Windows apply its own DPI virtualization (bitmap stretching)
+    // to this window instead, which keeps mouse coordinates and rendered
+    // widget positions in the same coordinate space -- at the cost of a
+    // slightly soft/blurry look on a scaled display, which is far less
+    // bad than the UI being unusable. See the style-scaling call below for
+    // the (separate) "make widgets a sane physical size" concern.
     m_Window = SDL_CreateWindow("Moonlight",
                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                  1280, 800,
-                                 SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+                                 SDL_WINDOW_RESIZABLE);
     if (!m_Window) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "ImGuiWindow: SDL_CreateWindow() failed: %s", SDL_GetError());

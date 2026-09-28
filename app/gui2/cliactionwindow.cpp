@@ -27,10 +27,15 @@ CliActionWindow::~CliActionWindow()
 
 bool CliActionWindow::initialize()
 {
+    // No SDL_WINDOW_ALLOW_HIGHDPI -- same reasoning as ImGuiWindow::initialize()
+    // (imguiwindow.cpp): it can desync SDL's mouse-coordinate math from
+    // whatever DPI-awareness mode Qt's QGuiApplication already locked in
+    // for the process, silently breaking every ImGui widget's click
+    // hit-test on a scaled display (found in live testing).
     m_Window = SDL_CreateWindow("Moonlight",
                                  SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                  480, 200,
-                                 SDL_WINDOW_ALLOW_HIGHDPI);
+                                 0);
     if (!m_Window) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                      "CliActionWindow: SDL_CreateWindow() failed: %s", SDL_GetError());
