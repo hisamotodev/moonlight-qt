@@ -16,15 +16,19 @@ class PcListScreen : public QObject
     Q_OBJECT
 
 public:
-    explicit PcListScreen(QObject* parent = nullptr);
+    // computerManager is owned by the caller (ImGuiWindow), which also
+    // hands the same instance to AppListScreen once a paired PC is picked
+    // -- NvComputer pointers are only valid against the ComputerManager
+    // that owns them.
+    explicit PcListScreen(ComputerManager* computerManager, QObject* parent = nullptr);
     ~PcListScreen() override;
-
-    // Must be called once after construction, on the Qt thread that will
-    // keep pumping events for the lifetime of this screen.
-    void start();
 
     // Draws this frame's ImGui widgets. Called every tick.
     void render();
+
+signals:
+    // The user picked an online, paired PC to browse its app list.
+    void computerSelected(NvComputer* computer);
 
 private slots:
     void handlePairingCompleted(NvComputer* computer, QString error);

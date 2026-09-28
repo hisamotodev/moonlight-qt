@@ -2,15 +2,14 @@
 
 #include "backend/computermanager.h"
 #include "backend/nvcomputer.h"
-#include "settings/streamingpreferences.h"
 
 #include <QReadLocker>
 
 #include <imgui.h>
 
-PcListScreen::PcListScreen(QObject* parent)
+PcListScreen::PcListScreen(ComputerManager* computerManager, QObject* parent)
     : QObject(parent),
-      m_ComputerManager(nullptr),
+      m_ComputerManager(computerManager),
       m_ShowAddPcPopup(false),
       m_ShowPairDialog(false),
       m_ShowErrorDialog(false),
@@ -23,7 +22,6 @@ PcListScreen::PcListScreen(QObject* parent)
     // QObject, so we talk to it directly instead of going through
     // ComputerModel (which only exists to adapt it to QAbstractListModel
     // for QML's ListView).
-    m_ComputerManager = new ComputerManager(StreamingPreferences::get());
     connect(m_ComputerManager, &ComputerManager::pairingCompleted,
             this, &PcListScreen::handlePairingCompleted);
     connect(m_ComputerManager, &ComputerManager::computerAddCompleted,
@@ -32,14 +30,6 @@ PcListScreen::PcListScreen(QObject* parent)
 
 PcListScreen::~PcListScreen()
 {
-    if (m_ComputerManager) {
-        m_ComputerManager->stopPollingAsync();
-    }
-}
-
-void PcListScreen::start()
-{
-    m_ComputerManager->startPolling();
 }
 
 void PcListScreen::render()
@@ -105,7 +95,7 @@ void PcListScreen::renderPcList()
                     m_ShowErrorDialog = true;
                     ImGui::OpenPopup("Error");
                 } else if (paired) {
-                    // Phase 2 adds the app list / stream launch here.
+                    emit computerSelected(computer);
                 } else {
                     const QString pin = m_ComputerManager->generatePinString();
 

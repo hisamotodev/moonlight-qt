@@ -206,6 +206,7 @@ SOURCES += \
     backend/systemproperties.cpp \
     gui2/imguiwindow.cpp \
     gui2/pclistscreen.cpp \
+    gui2/applistscreen.cpp \
     wm.cpp
 
 HEADERS += \
@@ -245,7 +246,8 @@ HEADERS += \
     streaming/video/overlaymanager.h \
     backend/systemproperties.h \
     gui2/imguiwindow.h \
-    gui2/pclistscreen.h
+    gui2/pclistscreen.h \
+    gui2/applistscreen.h
 
 # Platform-specific renderers and decoders
 ffmpeg {

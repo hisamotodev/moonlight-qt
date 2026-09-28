@@ -1,5 +1,11 @@
 #include "imguiwindow.h"
 #include "pclistscreen.h"
+#include "applistscreen.h"
+
+#include "backend/computermanager.h"
+#include "backend/systemproperties.h"
+#include "settings/streamingpreferences.h"
+#include "streaming/session.h"
 
 #include <SDL.h>
 #include <imgui.h>
@@ -12,7 +18,13 @@ ImGuiWindow::ImGuiWindow(QObject* parent)
       m_Renderer(nullptr),
       m_WindowId(0),
       m_Initialized(false),
-      m_PcListScreen(nullptr)
+      m_ComputerManager(nullptr),
+      m_SystemProperties(nullptr),
+      m_PcListScreen(nullptr),
+      m_AppListScreen(nullptr),
+      m_ActiveSession(nullptr),
+      m_SessionInFlight(false),
+      m_ShowSessionErrorDialog(false)
 {
     connect(&m_Timer, &QTimer::timeout, this, &ImGuiWindow::tick);
 }
@@ -20,6 +32,10 @@ ImGuiWindow::ImGuiWindow(QObject* parent)
 ImGuiWindow::~ImGuiWindow()
 {
     shutdown();
+
+    if (m_ComputerManager) {
+        m_ComputerManager->stopPollingAsync();
+    }
 }
 
 bool ImGuiWindow::initialize()
@@ -55,8 +71,23 @@ bool ImGuiWindow::initialize()
     ImGui_ImplSDL2_InitForSDLRenderer(m_Window, m_Renderer);
     ImGui_ImplSDLRenderer2_Init(m_Renderer);
 
-    m_PcListScreen = new PcListScreen(this);
-    m_PcListScreen->start();
+    // Shared with both PcListScreen and AppListScreen -- NvComputer
+    // pointers are only valid against the ComputerManager that owns them,
+    // so there must be exactly one instance for the lifetime of the window
+    // (mirrors the single ComputerManager singleton QML registers).
+    m_ComputerManager = new ComputerManager(StreamingPreferences::get());
+
+    // Mirrors main.qml's startup: kick off the async hardware/gamepad
+    // capability probe once, up front. Session::initialize() requires
+    // waitForAsyncLoad() to have been paired with this before it runs.
+    m_SystemProperties = new SystemProperties();
+    m_SystemProperties->startAsyncLoad();
+
+    m_PcListScreen = new PcListScreen(m_ComputerManager, this);
+    connect(m_PcListScreen, &PcListScreen::computerSelected,
+            this, &ImGuiWindow::handleComputerSelected);
+
+    m_ComputerManager->startPolling();
 
     m_Initialized = true;
 
@@ -109,8 +140,32 @@ void ImGuiWindow::renderFrame()
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
-    if (m_PcListScreen) {
-        m_PcListScreen->render();
+    if (m_SessionInFlight) {
+        renderSessionStatusOverlay();
+    } else {
+        if (m_AppListScreen) {
+            m_AppListScreen->render();
+        } else if (m_PcListScreen) {
+            m_PcListScreen->render();
+        }
+
+        // Shown once a session that failed (or logged a launch error)
+        // returns control to us -- same text StreamSegue.qml's
+        // streamSegueErrorDialog would have shown.
+        if (ImGui::BeginPopupModal("Session Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (!m_ShowSessionErrorDialog) {
+                ImGui::CloseCurrentPopup();
+            } else {
+                const QByteArray text = m_SessionErrorText.toUtf8();
+                ImGui::TextWrapped("%s", text.constData());
+                if (ImGui::Button("OK")) {
+                    m_ShowSessionErrorDialog = false;
+                    m_SessionErrorText.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::EndPopup();
+        }
     }
 
     ImGui::Render();
@@ -119,6 +174,127 @@ void ImGuiWindow::renderFrame()
     SDL_RenderClear(m_Renderer);
     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), m_Renderer);
     SDL_RenderPresent(m_Renderer);
+}
+
+void ImGuiWindow::renderSessionStatusOverlay()
+{
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("##sessionstatus", nullptr,
+                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
+    const QByteArray text = m_SessionStageText.toUtf8();
+    ImGui::Text("%s", text.constData());
+    ImGui::End();
+}
+
+void ImGuiWindow::handleComputerSelected(NvComputer* computer)
+{
+    delete m_AppListScreen;
+    m_AppListScreen = new AppListScreen(m_ComputerManager, computer, this);
+    connect(m_AppListScreen, &AppListScreen::backRequested,
+            this, &ImGuiWindow::handleAppListBackRequested);
+    connect(m_AppListScreen, &AppListScreen::launchRequested,
+            this, &ImGuiWindow::handleLaunchRequested);
+}
+
+void ImGuiWindow::handleAppListBackRequested()
+{
+    delete m_AppListScreen;
+    m_AppListScreen = nullptr;
+}
+
+void ImGuiWindow::handleLaunchRequested(Session* session, QString appName)
+{
+    if (m_SessionInFlight) {
+        // A launch is already in progress; drop this one rather than
+        // starting a second concurrent Session.
+        delete session;
+        return;
+    }
+
+    m_ActiveSession = session;
+    m_ActiveAppName = appName;
+    m_SessionStageText = QStringLiteral("Starting %1...").arg(appName);
+    m_SessionInFlight = true;
+    m_SessionErrorText.clear();
+
+    connect(session, &Session::stageStarting, this, &ImGuiWindow::handleSessionStageStarting);
+    connect(session, &Session::stageFailed, this, &ImGuiWindow::handleSessionStageFailed);
+    connect(session, &Session::connectionStarted, this, &ImGuiWindow::handleSessionConnectionStarted);
+    connect(session, &Session::displayLaunchError, this, &ImGuiWindow::handleSessionDisplayLaunchError);
+    connect(session, &Session::sessionFinished, this, &ImGuiWindow::handleSessionFinished);
+    connect(session, &Session::readyForDeletion, this, &ImGuiWindow::handleSessionReadyForDeletion);
+
+    // Required before Session::initialize() -- see SystemProperties'
+    // class comment; it may still be using the SDL video subsystem.
+    m_SystemProperties->waitForAsyncLoad();
+
+    // We have no QQuickWindow to hand Session::initialize(); every use of
+    // it inside Session is guarded by a null check (m_QtWindow != nullptr)
+    // after a debug-only Q_ASSERT, so passing nullptr just means Session
+    // skips minimize/restore-syncing with a Qt browsing window, which we
+    // don't have.
+    if (!session->initialize(nullptr)) {
+        handleSessionFinished(0);
+        handleSessionReadyForDeletion();
+        return;
+    }
+
+    session->start();
+}
+
+void ImGuiWindow::handleSessionStageStarting(QString stage)
+{
+    m_SessionStageText = QStringLiteral("Starting %1...").arg(stage);
+}
+
+void ImGuiWindow::handleSessionStageFailed(QString stage, int errorCode, QString failingPorts)
+{
+    m_SessionErrorText = QStringLiteral("Starting %1 failed: Error %2").arg(stage).arg(errorCode);
+    if (!failingPorts.isEmpty()) {
+        m_SessionErrorText += QStringLiteral("\n\nCheck your firewall and port forwarding rules for port(s): %1")
+                .arg(failingPorts);
+    }
+}
+
+void ImGuiWindow::handleSessionConnectionStarted()
+{
+    // Hide the browsing window now that streaming has begun, same as
+    // StreamSegue.qml's connectionStarted() hiding the Qt window.
+    SDL_HideWindow(m_Window);
+}
+
+void ImGuiWindow::handleSessionDisplayLaunchError(QString text)
+{
+    m_SessionErrorText = text;
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s", text.toUtf8().constData());
+}
+
+void ImGuiWindow::handleSessionFinished(int portTestResult)
+{
+    if (portTestResult != 0 && portTestResult != -1 && !m_SessionErrorText.isEmpty()) {
+        m_SessionErrorText += QStringLiteral(
+            "\n\nThis PC's Internet connection is blocking Moonlight. "
+            "Streaming over the Internet may not work while connected to this network.");
+    }
+
+    SDL_ShowWindow(m_Window);
+    m_SessionInFlight = false;
+
+    if (!m_SessionErrorText.isEmpty()) {
+        m_ShowSessionErrorDialog = true;
+        ImGui::OpenPopup("Session Error");
+    }
+}
+
+void ImGuiWindow::handleSessionReadyForDeletion()
+{
+    // Session is heavyweight (keeps SDL_ttf etc. alive until destroyed),
+    // same rationale as StreamSegue.qml's sessionReadyForDeletion() gc().
+    if (m_ActiveSession) {
+        m_ActiveSession->deleteLater();
+        m_ActiveSession = nullptr;
+    }
 }
 
 void ImGuiWindow::shutdown()
