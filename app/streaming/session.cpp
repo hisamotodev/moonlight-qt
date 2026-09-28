@@ -1587,11 +1587,15 @@ public:
     Session* m_Session;
 };
 
-#define REMOTE_RUN_SIZE_POLL_INTERVAL_MS 1000
+#define CAPTURE_WINDOW_POLL_INTERVAL_MS 1000
 
-// Continuously tracks a remote-run capture-window app's real window size for
-// the whole lifetime of the stream, not just once before it starts. Titan
-// already measures this directly (GetWindowRect on the resolved HWND, see
+// Continuously tracks a capture-window app's real window size for the whole
+// lifetime of the stream, not just once before it starts. Runs for every
+// session regardless of how the app was launched (remote-run or a normal
+// by-name launch) -- see this session's fix; Titan's own endpoint is a
+// cheap near-instant no-op for apps that aren't capture_window at all, so
+// there's no meaningful cost to always starting this thread. Titan already
+// measures the window directly (GetWindowRect on the resolved HWND, see
 // nvhttp.cpp's remote_run_status()) -- reusing that same measurement here,
 // polled periodically, sidesteps needing to detect a resolution change from
 // the decoded video frames at all. That was the original approach tried
@@ -1603,14 +1607,14 @@ public:
 // hardware surface pool is sized once at connection setup. Measuring the
 // window directly on the server side avoids relying on that fragile signal
 // entirely.
-class RemoteRunSizePollThread : public QThread
+class CaptureWindowPollThread : public QThread
 {
 public:
-    RemoteRunSizePollThread(Session* session) :
+    CaptureWindowPollThread(Session* session) :
         QThread(nullptr),
         m_Session(session)
     {
-        setObjectName("RemoteRun Size Poll");
+        setObjectName("Capture Window Poll");
     }
 
     void run() override
@@ -1622,7 +1626,7 @@ public:
         quint32 lastIconCrc32 = 0;
 
         while (!isInterruptionRequested()) {
-            for (int slept = 0; slept < REMOTE_RUN_SIZE_POLL_INTERVAL_MS && !isInterruptionRequested(); slept += 100) {
+            for (int slept = 0; slept < CAPTURE_WINDOW_POLL_INTERVAL_MS && !isInterruptionRequested(); slept += 100) {
                 QThread::msleep(100);
             }
             if (isInterruptionRequested()) {
@@ -1708,7 +1712,7 @@ void Session::notifyVideoContentSizeChanged(int width, int height)
         return;
     }
 
-    // Called from RemoteRunSizePollThread, not the main thread -- push an
+    // Called from CaptureWindowPollThread, not the main thread -- push an
     // SDL event rather than touching the window directly, matching every
     // other cross-thread-to-main-loop call in this file (see clRumble()).
     SDL_Event event = {};
@@ -1721,7 +1725,7 @@ void Session::notifyVideoContentSizeChanged(int width, int height)
 
 // Payload for SDL_CODE_WINDOW_INFO_CHANGED -- data1/data2 are only
 // pointer-sized, so title/icon (either of which may be the "unchanged" one
-// for a given poll -- see RemoteRunSizePollThread::run()) are heap-allocated
+// for a given poll -- see CaptureWindowPollThread::run()) are heap-allocated
 // here and freed by the main-loop handler that consumes them.
 struct WindowInfoChangedPayload
 {
@@ -1744,22 +1748,25 @@ void Session::notifyWindowInfoChanged(QString title, QByteArray iconRgba)
     SDL_PushEvent(&event);
 }
 
-#define REMOTE_RUN_READY_POLL_INTERVAL_MS 1000
-#define REMOTE_RUN_READY_MAX_ATTEMPTS 30  // ~30s
+#define CAPTURE_WINDOW_READY_POLL_INTERVAL_MS 1000
+#define CAPTURE_WINDOW_READY_MAX_ATTEMPTS 30  // ~30s
 
 // Called in a non-main thread (see startConnectionAsync() below). Blocking
 // here (via QThread::msleep(), not a nested QEventLoop) is fine -- this
-// thread has no UI/event-loop responsibilities of its own.
-bool Session::waitForRemoteRunReady(NvHTTP& http, int appId)
+// thread has no UI/event-loop responsibilities of its own. Called for every
+// launch, not just remote-run ones (see this session's fix) -- Titan's
+// endpoint reports "ready" on the first poll for a non-capture_window app,
+// so this loop only actually iterates for capture_window apps.
+bool Session::waitForCaptureWindowReady(NvHTTP& http, int appId)
 {
-    for (int attempt = 0; attempt < REMOTE_RUN_READY_MAX_ATTEMPTS; attempt++) {
+    for (int attempt = 0; attempt < CAPTURE_WINDOW_READY_MAX_ATTEMPTS; attempt++) {
         QString state;
         int targetWidth = 0;
         int targetHeight = 0;
         try {
             state = http.remoteRunStatus(appId, &targetWidth, &targetHeight);
         } catch (const std::exception& e) {
-            qWarning() << "Remote-run status check failed:" << e.what();
+            qWarning() << "Capture-window status check failed:" << e.what();
             return false;
         }
 
@@ -1777,16 +1784,16 @@ bool Session::waitForRemoteRunReady(NvHTTP& http, int appId)
             if (targetWidth > 0 && targetHeight > 0) {
                 m_StreamConfig.width = targetWidth & ~0x1;  // even width, matching getWindowDimensions()'s own rounding
                 m_StreamConfig.height = targetHeight & ~0x1;
-                qInfo() << "Remote-run app window resolved to" << m_StreamConfig.width << "x" << m_StreamConfig.height;
+                qInfo() << "Capture-window app window resolved to" << m_StreamConfig.width << "x" << m_StreamConfig.height;
             }
             return true;
         } else if (state == "failed") {
-            qWarning() << "Titan reported the remote-run app as failed to become ready";
+            qWarning() << "Titan reported the capture-window app as failed to become ready";
             return false;
         }
 
-        qInfo() << "Waiting for remote-run app to become ready (state:" << state << ")";
-        QThread::msleep(REMOTE_RUN_READY_POLL_INTERVAL_MS);
+        qInfo() << "Waiting for capture-window app to become ready (state:" << state << ")";
+        QThread::msleep(CAPTURE_WINDOW_READY_POLL_INTERVAL_MS);
     }
 
     return false;
@@ -1837,14 +1844,16 @@ bool Session::startConnectionAsync()
                       rtspSessionUrl);
 
         // agent.md sections 8.3/11.4: startApp() above just returns once
-        // Titan has spawned the process -- for a capture-window remote-run
-        // app, the target HWND may not exist yet (launcher -> game
-        // handoff). Wait for Titan to report "ready" before proceeding with
-        // the rest of the connection sequence below, rather than racing
-        // ahead into a stream of whatever WGC happens to be capturing (or
-        // nothing) at this instant.
-        if (!m_RemoteRunPath.isEmpty() && !waitForRemoteRunReady(http, m_App.id)) {
-            emit displayLaunchError(tr("Remote-run app \"%1\" did not become ready to stream in time").arg(m_App.name));
+        // Titan has spawned the process -- for a capture-window app
+        // (window-class configured in apps.json, whether launched via
+        // remote-run or by name -- see this session's fix), the target HWND
+        // may not exist yet (launcher -> game handoff). Wait for Titan to
+        // report "ready" before proceeding with the rest of the connection
+        // sequence below, rather than racing ahead into a stream of
+        // whatever WGC happens to be capturing (or nothing) at this instant.
+        // For a non-capture_window app this returns immediately.
+        if (!waitForCaptureWindowReady(http, m_App.id)) {
+            emit displayLaunchError(tr("App \"%1\" did not become ready to stream in time").arg(m_App.name));
             return false;
         }
     } catch (const GfeHttpResponseException& e) {
@@ -1958,7 +1967,7 @@ bool Session::startConnectionAsync()
     return true;
 }
 
-// Called from RemoteRunSizePollThread, not the main thread. Rebuilds the
+// Called from CaptureWindowPollThread, not the main thread. Rebuilds the
 // stream connection at a new resolution so the decoded VIDEO CONTENT
 // follows a resize, not just the client window: GameStream fixes
 // STREAM_CONFIGURATION for the life of a connection (see this function's
@@ -2247,12 +2256,11 @@ void Session::exec()
     m_UnexpectedTermination = false;
 
     // agent.md sections 7.8/11.5: keep the client window matching a
-    // remote-run capture-window app's real size for the whole session, not
-    // just at connection setup. See RemoteRunSizePollThread's doc comment.
-    if (!m_RemoteRunPath.isEmpty()) {
-        m_RemoteRunSizePollThread = new RemoteRunSizePollThread(this);
-        m_RemoteRunSizePollThread->start();
-    }
+    // capture-window app's real size for the whole session, not just at
+    // connection setup -- for every launch, not just remote-run ones (see
+    // this session's fix). See CaptureWindowPollThread's doc comment.
+    m_CaptureWindowPollThread = new CaptureWindowPollThread(this);
+    m_CaptureWindowPollThread->start();
 
     // Start rich presence to indicate we're in game
     RichPresenceManager presence(*m_Preferences, m_App.name);
@@ -2694,13 +2702,13 @@ DispatchDeferredCleanup:
     delete m_StreamOverlay;
     m_StreamOverlay = nullptr;
 
-    // Stop the remote-run size poll thread before anything it might touch
+    // Stop the capture-window poll thread before anything it might touch
     // (m_Window) gets torn down below.
-    if (m_RemoteRunSizePollThread != nullptr) {
-        m_RemoteRunSizePollThread->requestInterruption();
-        m_RemoteRunSizePollThread->wait();
-        delete m_RemoteRunSizePollThread;
-        m_RemoteRunSizePollThread = nullptr;
+    if (m_CaptureWindowPollThread != nullptr) {
+        m_CaptureWindowPollThread->requestInterruption();
+        m_CaptureWindowPollThread->wait();
+        delete m_CaptureWindowPollThread;
+        m_CaptureWindowPollThread = nullptr;
     }
 
     // Switch back to synchronous logging mode

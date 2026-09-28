@@ -101,7 +101,7 @@ class Session : public QObject
     friend class SdlInputHandler;
     friend class DeferredSessionCleanupTask;
     friend class AsyncConnectionStartThread;
-    friend class RemoteRunSizePollThread;
+    friend class CaptureWindowPollThread;
 
 public:
     explicit Session(NvComputer* computer, NvApp& app, StreamingPreferences *preferences = nullptr, QString remoteRunPath = QString());
@@ -139,7 +139,7 @@ public:
 
     void setShouldExit(bool quitHostApp = false);
 
-    // Called from RemoteRunSizePollThread (session.cpp) when Titan's own
+    // Called from CaptureWindowPollThread (session.cpp) when Titan's own
     // window-size measurement (GetWindowRect on the resolved HWND, via
     // /api/custom/remote-run/status -- see nvhttp.cpp on the Titan side)
     // reports a different size than last observed. Pushes an SDL event
@@ -148,11 +148,11 @@ public:
     static
     void notifyVideoContentSizeChanged(int width, int height);
 
-    // Called from RemoteRunSizePollThread (session.cpp) when the remote-run
-    // target window's title and/or icon (32x32 RGBA8888, from Titan's
-    // /api/custom/remote-run/icon) has changed since the last poll. Takes
-    // ownership of `iconRgba` (may be empty if only the title changed).
-    // Same background-thread-to-SDL-event pattern as
+    // Called from CaptureWindowPollThread (session.cpp) when the
+    // capture-window target's title and/or icon (32x32 RGBA8888, from
+    // Titan's /api/custom/remote-run/icon) has changed since the last poll.
+    // Takes ownership of `iconRgba` (may be empty if only the title
+    // changed). Same background-thread-to-SDL-event pattern as
     // notifyVideoContentSizeChanged() above.
     static
     void notifyWindowInfoChanged(QString title, QByteArray iconRgba);
@@ -180,15 +180,19 @@ private:
 
     bool startConnectionAsync();
 
-    // agent.md sections 8.3/11.4: for a remote-run launch, polls Titan's
-    // launch-readiness state (capture-window target resolved, etc.) after
-    // startApp() actually launches the app but before proceeding with the
-    // rest of the connection sequence. Called on startConnectionAsync()'s
-    // background thread, so a synchronous poll loop here doesn't block the
-    // UI -- see NvHTTP::remoteRunStatus().
-    bool waitForRemoteRunReady(NvHTTP& http, int appId);
+    // agent.md sections 8.3/11.4: for any capture_window app (window-class
+    // configured in apps.json on the Titan side -- not just remote-run
+    // launches, see this session's fix), polls Titan's launch-readiness
+    // state (capture-window target resolved, etc.) after startApp() actually
+    // launches the app but before proceeding with the rest of the connection
+    // sequence. For a non-capture_window app, Titan's endpoint reports
+    // "ready" immediately, so this is a single fast round trip, not a real
+    // wait. Called on startConnectionAsync()'s background thread, so a
+    // synchronous poll loop here doesn't block the UI -- see
+    // NvHTTP::remoteRunStatus().
+    bool waitForCaptureWindowReady(NvHTTP& http, int appId);
 
-    // Called from RemoteRunSizePollThread (session.cpp) when the real window
+    // Called from CaptureWindowPollThread (session.cpp) when the real window
     // size has changed and the negotiated stream resolution should follow.
     // GameStream fixes STREAM_CONFIGURATION for the life of a connection, so
     // this tears the current connection down and renegotiates a new one
@@ -304,7 +308,11 @@ private:
     NvApp m_App;
     QString m_RemoteRunPath;
     SDL_Window* m_Window;
-    QThread* m_RemoteRunSizePollThread = nullptr;
+    // Named for what it polls (any capture_window app's real window size/
+    // title/icon), not for how the app was launched -- it runs for every
+    // session, remote-run or not (see this session's fix; Titan's endpoint
+    // is a cheap near-instant no-op for non-capture_window apps).
+    QThread* m_CaptureWindowPollThread = nullptr;
     QSemaphore m_ReconnectDecoderTornDownSem {0};
     IVideoDecoder* m_VideoDecoder;
     SDL_mutex* m_DecoderLock;
