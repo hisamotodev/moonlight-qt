@@ -87,5 +87,13 @@ void SettingsScreen::render(bool* open)
         m_Prefs->save();
     }
 
+    ImGui::Separator();
+    // VERSION_STR/VERSION_COMMIT_STR are qmake compiler defines
+    // (app.pro/app/version.txt + git rev-parse) -- same values
+    // SystemProperties::versionString/versionCommitString expose, shown
+    // here directly since this screen doesn't otherwise need a
+    // SystemProperties instance.
+    ImGui::TextDisabled("Moonlight " VERSION_STR " (" VERSION_COMMIT_STR ")");
+
     ImGui::End();
 }
