@@ -76,18 +76,17 @@ void CliActionWindow::showErrorAndQuitOnClose(const QString& text)
     m_ErrorText = text;
     m_ShowError = true;
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s", text.toUtf8().constData());
-    if (m_Initialized) {
-        ImGui::OpenPopup("Error");
-    }
+    // ImGui::OpenPopup() is deliberately not called here: this can be
+    // invoked by a driver outside CliActionWindow::tick()'s NewFrame()/
+    // Render() bracket, where ImGui's current-window pointer is null and
+    // OpenPopup() would crash. renderFrame() below opens it instead, from
+    // the same ID-stack level as its BeginPopupModal().
 }
 
 void CliActionWindow::showInfoAndQuitOnClose(const QString& text)
 {
     m_InfoText = text;
     m_ShowInfo = true;
-    if (m_Initialized) {
-        ImGui::OpenPopup("Info");
-    }
 }
 
 void CliActionWindow::showYesNo(const QString& text, std::function<void()> onYes, std::function<void()> onNo)
@@ -96,9 +95,6 @@ void CliActionWindow::showYesNo(const QString& text, std::function<void()> onYes
     m_OnYes = std::move(onYes);
     m_OnNo = std::move(onNo);
     m_ShowYesNo = true;
-    if (m_Initialized) {
-        ImGui::OpenPopup("Confirm");
-    }
 }
 
 void CliActionWindow::handleEvent(const SDL_Event& event)
@@ -145,6 +141,14 @@ void CliActionWindow::renderFrame()
     ImGui::Text("%s", text.constData());
     ImGui::End();
 
+    if (m_ShowError) {
+        ImGui::OpenPopup("Error");
+    }
+    // See PcListScreen::renderPairDialog() (pclistscreen.cpp) for why this
+    // needs a width hint: without it, TextWrapped() below computes its wrap
+    // width from the popup's too-narrow pre-layout size, producing a tall,
+    // single-word-per-line dialog.
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const QByteArray errText = m_ErrorText.toUtf8();
         ImGui::TextWrapped("%s", errText.constData());
@@ -155,6 +159,10 @@ void CliActionWindow::renderFrame()
         ImGui::EndPopup();
     }
 
+    if (m_ShowInfo) {
+        ImGui::OpenPopup("Info");
+    }
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Info", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const QByteArray infoText = m_InfoText.toUtf8();
         ImGui::TextWrapped("%s", infoText.constData());
@@ -165,6 +173,10 @@ void CliActionWindow::renderFrame()
         ImGui::EndPopup();
     }
 
+    if (m_ShowYesNo) {
+        ImGui::OpenPopup("Confirm");
+    }
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const QByteArray confirmText = m_YesNoText.toUtf8();
         ImGui::TextWrapped("%s", confirmText.constData());

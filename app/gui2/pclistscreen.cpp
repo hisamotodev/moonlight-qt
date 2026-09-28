@@ -48,7 +48,6 @@ void PcListScreen::renderPcList()
     if (ImGui::Button("Add PC by IP...")) {
         m_AddPcAddressBuf[0] = '\0';
         m_ShowAddPcPopup = true;
-        ImGui::OpenPopup("Add PC");
     }
 
     ImGui::Separator();
@@ -84,8 +83,20 @@ void PcListScreen::renderPcList()
 
         ImGui::PushID(computer);
 
+        // Selectable() with no explicit size stretches its hit-box to the
+        // full remaining window width by default -- which, on this same
+        // row, extends underneath the "Delete" SmallButton placed via
+        // SameLine() below. ImGui resolves overlapping widgets in
+        // submission order (the first one to claim the hover for a given
+        // frame blocks later ones unless AllowOverlap is set), and since
+        // this Selectable is submitted first, it silently swallowed every
+        // click meant for Delete. Reserve Delete's column width up front so
+        // the two hit-boxes don't overlap at all.
+        const float deleteButtonWidth = ImGui::CalcTextSize("Delete").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        const float selectableWidth = ImGui::GetContentRegionAvail().x - deleteButtonWidth - ImGui::GetStyle().ItemSpacing.x;
+
         const QByteArray label = (name + QStringLiteral("  --  ") + status).toUtf8();
-        if (ImGui::Selectable(label.constData())) {
+        if (ImGui::Selectable(label.constData(), false, 0, ImVec2(selectableWidth, 0))) {
             if (online) {
                 if (!supported) {
                     m_ErrorText = QStringLiteral(
@@ -93,7 +104,6 @@ void PcListScreen::renderPcList()
                         "supported by this build of Moonlight.").arg(name);
                     m_ErrorHelpText.clear();
                     m_ShowErrorDialog = true;
-                    ImGui::OpenPopup("Error");
                 } else if (paired) {
                     emit computerSelected(computer);
                 } else {
@@ -106,7 +116,6 @@ void PcListScreen::renderPcList()
 
                     m_PairPin = pin;
                     m_ShowPairDialog = true;
-                    ImGui::OpenPopup("Pairing");
                 }
             }
         }
@@ -116,7 +125,6 @@ void PcListScreen::renderPcList()
             m_DeleteTarget = computer;
             m_DeleteTargetName = name;
             m_ShowDeleteConfirm = true;
-            ImGui::OpenPopup("Delete PC");
         }
 
         ImGui::PopID();
@@ -127,6 +135,17 @@ void PcListScreen::renderPcList()
 
 void PcListScreen::renderAddPcPopup()
 {
+    // OpenPopup() and BeginPopupModal() must run at the same ID-stack level
+    // (they hash the popup name against the current window's ID stack), so
+    // this call has to live right next to BeginPopupModal() below rather
+    // than at the button click site, which runs under a different context
+    // (inside "Computers"'s Begin/End, possibly under a per-row PushID) --
+    // otherwise the two calls compute different popup IDs and the popup can
+    // never actually open.
+    if (m_ShowAddPcPopup) {
+        ImGui::OpenPopup("Add PC");
+    }
+
     if (ImGui::BeginPopupModal("Add PC", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!m_ShowAddPcPopup) {
             ImGui::CloseCurrentPopup();
@@ -157,6 +176,19 @@ void PcListScreen::renderAddPcPopup()
 
 void PcListScreen::renderPairDialog()
 {
+    // See renderAddPcPopup() for why OpenPopup() lives here, next to
+    // BeginPopupModal(), instead of at the request site.
+    if (m_ShowPairDialog) {
+        ImGui::OpenPopup("Pairing");
+    }
+
+    // AlwaysAutoResize with no width hint lets TextWrapped() below compute
+    // its wrap width from whatever the popup's width happens to be on its
+    // very first (pre-layout) frame, which tends to be far too narrow --
+    // producing a tall, single-word-per-line dialog. Pin a sane width so
+    // the paragraph wraps normally; height still auto-fits the content.
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
+
     if (ImGui::BeginPopupModal("Pairing", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!m_ShowPairDialog) {
             ImGui::CloseCurrentPopup();
@@ -179,6 +211,19 @@ void PcListScreen::renderPairDialog()
 
 void PcListScreen::renderErrorDialog()
 {
+    // See renderAddPcPopup() for why OpenPopup() lives here, next to
+    // BeginPopupModal(), instead of at the request site -- this also keeps
+    // it off the pairingCompleted/computerAddCompleted signal handlers
+    // below, which can run outside ImGui's NewFrame()/Render() bracket
+    // (queued cross-thread signals), where ImGui::OpenPopup() would
+    // dereference a null current-window.
+    if (m_ShowErrorDialog) {
+        ImGui::OpenPopup("Error");
+    }
+
+    // See renderPairDialog() for why this needs a width hint.
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
+
     if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!m_ShowErrorDialog) {
             ImGui::CloseCurrentPopup();
@@ -202,6 +247,15 @@ void PcListScreen::renderErrorDialog()
 
 void PcListScreen::renderDeleteConfirmDialog()
 {
+    // See renderAddPcPopup() for why OpenPopup() lives here, next to
+    // BeginPopupModal(), instead of at the Delete button (which runs inside
+    // this row's PushID(computer) -- a different ID-stack level than this
+    // function, so the popup IDs would never match and Delete would appear
+    // to do nothing).
+    if (m_ShowDeleteConfirm) {
+        ImGui::OpenPopup("Delete PC");
+    }
+
     if (ImGui::BeginPopupModal("Delete PC", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!m_ShowDeleteConfirm) {
             ImGui::CloseCurrentPopup();
@@ -240,7 +294,6 @@ void PcListScreen::handlePairingCompleted(NvComputer* computer, QString error)
         m_ErrorText = error;
         m_ErrorHelpText.clear();
         m_ShowErrorDialog = true;
-        ImGui::OpenPopup("Error");
     }
 }
 
@@ -260,6 +313,5 @@ void PcListScreen::handleComputerAddCompleted(QVariant success, QVariant detecte
         }
 
         m_ShowErrorDialog = true;
-        ImGui::OpenPopup("Error");
     }
 }

@@ -82,7 +82,6 @@ void AppListScreen::requestLaunch(const NvApp& app, const QString& remoteRunPath
         m_PendingLaunchApp = app;
         m_PendingRemoteRunPath = remoteRunPath;
         m_ShowQuitConfirm = true;
-        ImGui::OpenPopup("Quit Running App");
         return;
     }
 
@@ -111,7 +110,6 @@ void AppListScreen::renderAppList()
     if (ImGui::Button("Remote Run...")) {
         m_RemoteRunPathBuf[0] = '\0';
         m_ShowRemoteRunPopup = true;
-        ImGui::OpenPopup("Remote Run");
     }
 
     ImGui::Separator();
@@ -152,6 +150,13 @@ void AppListScreen::renderAppList()
 
 void AppListScreen::renderRemoteRunPopup()
 {
+    // OpenPopup() and BeginPopupModal() must run at the same ID-stack level
+    // (see PcListScreen::renderAddPcPopup() for the full explanation), so
+    // this lives here rather than at the "Remote Run..." button click site.
+    if (m_ShowRemoteRunPopup) {
+        ImGui::OpenPopup("Remote Run");
+    }
+
     if (ImGui::BeginPopupModal("Remote Run", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!m_ShowRemoteRunPopup) {
             ImGui::CloseCurrentPopup();
@@ -182,7 +187,6 @@ void AppListScreen::renderRemoteRunPopup()
                         m_ErrorText = QStringLiteral("Remote-run failed to resolve \"%1\": %2")
                                 .arg(path, QString::fromUtf8(e.what()));
                         m_ShowErrorDialog = true;
-                        ImGui::OpenPopup("Error");
                     }
 
                     if (!appName.isEmpty()) {
@@ -207,7 +211,6 @@ void AppListScreen::renderRemoteRunPopup()
                                 "list yet. Wait a moment for the app list to refresh and try again.")
                                     .arg(path, appName);
                             m_ShowErrorDialog = true;
-                            ImGui::OpenPopup("Error");
                         }
                     }
                 }
@@ -224,6 +227,21 @@ void AppListScreen::renderRemoteRunPopup()
 
 void AppListScreen::renderErrorDialog()
 {
+    // See renderRemoteRunPopup() / PcListScreen::renderAddPcPopup() -- this
+    // must be the only place that calls OpenPopup("Error") so it always
+    // runs at the same ID-stack level as BeginPopupModal() below, and never
+    // from the quitAppCompleted signal handler, which can run outside
+    // ImGui's NewFrame()/Render() bracket.
+    if (m_ShowErrorDialog) {
+        ImGui::OpenPopup("Error");
+    }
+
+    // AlwaysAutoResize + TextWrapped with no width hint computes the wrap
+    // width from the popup's pre-layout size on its first frame, which is
+    // too narrow -- producing a tall, single-word-per-line dialog. Pin a
+    // sane width; height still auto-fits the content.
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
+
     if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!m_ShowErrorDialog) {
             ImGui::CloseCurrentPopup();
@@ -242,6 +260,14 @@ void AppListScreen::renderErrorDialog()
 
 void AppListScreen::renderQuitConfirmDialog()
 {
+    // See renderErrorDialog() above for why OpenPopup() lives here.
+    if (m_ShowQuitConfirm) {
+        ImGui::OpenPopup("Quit Running App");
+    }
+
+    // See renderErrorDialog() above for why this needs a width hint.
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
+
     if (ImGui::BeginPopupModal("Quit Running App", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!m_ShowQuitConfirm) {
             ImGui::CloseCurrentPopup();
@@ -278,7 +304,6 @@ void AppListScreen::handleQuitAppCompleted(QVariant error)
     if (!error.toString().isEmpty()) {
         m_ErrorText = QStringLiteral("Quitting %1 failed: %2").arg(m_RunningAppName, error.toString());
         m_ShowErrorDialog = true;
-        ImGui::OpenPopup("Error");
         return;
     }
 

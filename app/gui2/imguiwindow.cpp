@@ -192,6 +192,23 @@ void ImGuiWindow::renderFrame()
         // Shown once a session that failed (or logged a launch error)
         // returns control to us -- same text StreamSegue.qml's
         // streamSegueErrorDialog would have shown.
+        // OpenPopup() and BeginPopupModal() must run at the same ID-stack
+        // level and inside ImGui's NewFrame()/Render() bracket (see
+        // PcListScreen::renderAddPcPopup() for the full explanation), so
+        // this can't live in handleSessionFinished() below -- that slot can
+        // run synchronously off the end of Session::exec() without going
+        // through tick()'s ImGui::SetCurrentContext(m_Context)/NewFrame(),
+        // where ImGui::OpenPopup() would touch a stale or null context.
+        if (m_ShowSessionErrorDialog) {
+            ImGui::OpenPopup("Session Error");
+        }
+
+        // AlwaysAutoResize + TextWrapped with no width hint computes the
+        // wrap width from the popup's pre-layout size on its first frame,
+        // which is too narrow -- producing a tall, single-word-per-line
+        // dialog. Pin a sane width; height still auto-fits the content.
+        ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Appearing);
+
         if (ImGui::BeginPopupModal("Session Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             if (!m_ShowSessionErrorDialog) {
                 ImGui::CloseCurrentPopup();
@@ -323,7 +340,6 @@ void ImGuiWindow::handleSessionFinished(int portTestResult)
 
     if (!m_SessionErrorText.isEmpty()) {
         m_ShowSessionErrorDialog = true;
-        ImGui::OpenPopup("Session Error");
     }
 }
 
