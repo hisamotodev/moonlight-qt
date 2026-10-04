@@ -102,6 +102,18 @@ void StreamOverlay::ensureSurface(int width, int height)
     ImGui_ImplSDL2_InitForSDLRenderer(m_Window, m_SoftRenderer);
     ImGui_ImplSDLRenderer2_Init(m_SoftRenderer);
 
+    // This backend is bound to the real game window (m_Window), not a
+    // separate overlay-only one -- SdlInputHandler owns that window's OS
+    // mouse cursor and capture state (relative mouse mode, hidden cursor,
+    // etc. for camera control) and must be the only thing touching it.
+    // Left at their defaults, ImGui_ImplSDL2_NewFrame() calls SDL_CaptureMouse()
+    // every frame (MouseCaptureMode_Enabled is SDL2's Windows default) and
+    // SDL_ShowCursor()/SDL_SetCursor() whenever no widget is hovered
+    // (UpdateMouseCursor()), which fights that and broke in-game mouse
+    // input entirely while the overlay button was visible.
+    ImGui_ImplSDL2_SetMouseCaptureMode(ImGui_ImplSDL2_MouseCaptureMode_Disabled);
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
     m_NeedsRender = true;
 }
 
