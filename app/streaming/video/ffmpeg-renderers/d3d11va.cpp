@@ -654,6 +654,25 @@ bool D3D11VARenderer::initialize(PDECODER_PARAMETERS params)
         return false;
     }
 
+    // Diagnostic test for a capture_window remote-run session: Windows 11
+    // rounds this window's corners by default (DWM-composited, purely
+    // cosmetic), suspected of leaving a faint edge artifact that survived
+    // every host-side (Titan) resolution/crop fix tried for a live-tested
+    // black-bar gap -- disabling it here rules out (or confirms) this
+    // window's own corner rounding as a separate contributor alongside
+    // whatever Titan's captured-window rounding may also be doing.
+    {
+        DWM_WINDOW_CORNER_PREFERENCE cornerPreference = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(info.info.win.window, DWMWA_WINDOW_CORNER_PREFERENCE, &cornerPreference, sizeof(cornerPreference));
+
+        // Disabling rounded corners alone left a 1px edge on three of four
+        // sides in live testing -- Windows 11 also draws a thin accent-color
+        // border around a window (a separate DWM feature from corner
+        // rounding), which DWMWA_COLOR_NONE turns off.
+        COLORREF borderColor = DWMWA_COLOR_NONE;
+        DwmSetWindowAttribute(info.info.win.window, DWMWA_BORDER_COLOR, &borderColor, sizeof(borderColor));
+    }
+
     // Disable Alt+Enter, PrintScreen, and window message snooping. This makes
     // it safe to run the renderer on a separate rendering thread rather than
     // requiring the main (message loop) thread.
