@@ -1381,6 +1381,27 @@ void Session::getWindowDimensions(int& x, int& y,
             m_StreamConfig.height <= usableBounds.h) {
             width = m_StreamConfig.width;
             height = m_StreamConfig.height;
+
+            // A remote-run (capture_window) session's window is sized to
+            // exactly match the negotiated video resolution -- but live
+            // testing found a persistent black-bar gap down each side no
+            // matter how precisely Titan's side of that negotiation was
+            // tuned (docs/research's other pixel-level capture quirks with
+            // unconfirmed root cause on this dev machine), pointing at a
+            // renderer/DPI-side rounding difference between the window's
+            // logical size and its actual drawable/swap-chain size rather
+            // than anything wrong with the negotiated numbers themselves.
+            // Making the window a hair narrower than the video is a direct,
+            // if inelegant, fix: StreamUtils::scaleSourceToDestinationSurface()
+            // in the renderers already letterboxes video that's slightly
+            // wider than the window instead of clipping it, so this can't
+            // cut off real content, only remove the empty margin.
+            // StreamingPreferences::captureWindowWidthFudgePx (Settings'
+            // diagnostics section) makes the per-side amount adjustable
+            // since the right value may vary by display/DPI setting.
+            if (!m_RemoteRunPath.isEmpty()) {
+                width -= 2 * m_Preferences->captureWindowWidthFudgePx;
+            }
         } else {
             // Otherwise, use 80% of usable bounds and preserve aspect ratio
             SDL_Rect src, dst;

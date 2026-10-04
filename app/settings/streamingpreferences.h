@@ -210,6 +210,15 @@ public:
     double overlayButtonY;
     bool overlayButtonHidden;
 
+    // Debug fudge factor for a remote-run (capture_window) session's client
+    // window: pixels shaved off each side beyond the negotiated video width,
+    // to close a persistent black-bar gap found in live testing whose root
+    // cause (a renderer/DPI-side rounding difference, not the negotiated
+    // resolution) wasn't pinned down -- see getWindowDimensions()'s comment
+    // in session.cpp. Adjustable here instead of hardcoded since the right
+    // value may vary by display/DPI setting.
+    int captureWindowWidthFudgePx;
+
 signals:
     void displayModeChanged();
     void bitrateChanged();

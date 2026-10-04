@@ -55,6 +55,7 @@
 #define SER_OVERLAYBUTTONX "overlaybuttonx"
 #define SER_OVERLAYBUTTONY "overlaybuttony"
 #define SER_OVERLAYBUTTONHIDDEN "overlaybuttonhidden"
+#define SER_CAPTUREWINDOWWIDTHFUDGEPX "capturewindowwidthfudgepx"
 
 #define CURRENT_DEFAULT_VER 2
 
@@ -177,6 +178,7 @@ void StreamingPreferences::reload()
     overlayButtonX = settings.value(SER_OVERLAYBUTTONX, 0.95).toDouble();
     overlayButtonY = settings.value(SER_OVERLAYBUTTONY, 0.08).toDouble();
     overlayButtonHidden = settings.value(SER_OVERLAYBUTTONHIDDEN, false).toBool();
+    captureWindowWidthFudgePx = settings.value(SER_CAPTUREWINDOWWIDTHFUDGEPX, 0).toInt();
 
 
     // Perform default settings updates as required based on last default version
@@ -371,6 +373,7 @@ void StreamingPreferences::save()
     settings.setValue(SER_OVERLAYBUTTONX, overlayButtonX);
     settings.setValue(SER_OVERLAYBUTTONY, overlayButtonY);
     settings.setValue(SER_OVERLAYBUTTONHIDDEN, overlayButtonHidden);
+    settings.setValue(SER_CAPTUREWINDOWWIDTHFUDGEPX, captureWindowWidthFudgePx);
 }
 
 int StreamingPreferences::getDefaultBitrate(int width, int height, int fps, bool yuv444)

@@ -82,6 +82,19 @@ void SettingsScreen::render(bool* open)
         ImGui::Checkbox("Warn me about connection quality issues", &m_Prefs->connectionWarnings);
     }
 
+    if (ImGui::CollapsingHeader("Diagnostics")) {
+        // See getWindowDimensions()'s comment in session.cpp: a remote-run
+        // (capture_window) session's client window still showed a small
+        // black-bar gap down each side even once the negotiated resolution
+        // was pixel-verified correct, pointing at a renderer/DPI-side
+        // rounding difference whose right-size fudge may vary by
+        // display/DPI setting -- adjustable here rather than hardcoded.
+        ImGui::InputInt("Capture-window width fudge (px/side)", &m_Prefs->captureWindowWidthFudgePx);
+        if (m_Prefs->captureWindowWidthFudgePx < 0) {
+            m_Prefs->captureWindowWidthFudgePx = 0;
+        }
+    }
+
     ImGui::Separator();
     if (ImGui::Button("Save")) {
         m_Prefs->save();
